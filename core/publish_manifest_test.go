@@ -32,59 +32,63 @@ func TestMiaodaManageURL(t *testing.T) {
 	assert.Equal(t, "app_4k5jepcbjmv6m", ExtractMiaodaAppID(got))
 }
 
-func TestPublishManifest_RoundTripDir(t *testing.T) {
-	dir := t.TempDir()
+func TestPublishManifest_RoundTrip(t *testing.T) {
+	sp := NewStatePaths(t.TempDir())
+	target := "/abs/path/to/dist"
 
 	// 不存在时返回 nil
-	m, err := ReadPublishManifest(dir)
+	m, err := ReadPublishManifest(sp, target)
 	require.NoError(t, err)
 	assert.Nil(t, m)
 
 	want := &PublishManifest{MiaodaAppID: "app_x", MiaodaURL: "https://miaoda.feishu.cn/app/app_x", Name: "dist"}
-	require.NoError(t, WritePublishManifest(dir, want))
+	require.NoError(t, WritePublishManifest(sp, target, want))
 
-	// 落在目录根，且为 .yaml 边车文件
-	path := filepath.Join(dir, publishManifestName)
+	// 落在中心 store publish/<sha256>.yaml
+	path := sp.PublishManifestFile(target)
 	_, statErr := os.Stat(path)
 	require.NoError(t, statErr)
-	assert.Equal(t, ".yaml", filepath.Ext(publishManifestName))
+	assert.Equal(t, ".yaml", filepath.Ext(path))
 
-	// 文件顶部带注释提示，并以带前缀的独立字段记录后端状态
+	// 文件顶部带注释提示，带前缀独立字段记录后端状态，并冗余 target_path
 	raw, err := os.ReadFile(path)
 	require.NoError(t, err)
 	assert.Contains(t, string(raw), "# larkdown 发布记录")
 	assert.Contains(t, string(raw), "miaoda_appid: app_x")
+	assert.Contains(t, string(raw), "target_path: "+target)
 	assert.NotContains(t, string(raw), "type:")
 
-	got, err := ReadPublishManifest(dir)
+	got, err := ReadPublishManifest(sp, target)
 	require.NoError(t, err)
 	require.NotNil(t, got)
 	assert.Equal(t, want.MiaodaAppID, got.MiaodaAppID)
 	assert.Equal(t, want.MiaodaURL, got.MiaodaURL)
 	assert.Equal(t, want.Name, got.Name)
+	assert.Equal(t, target, got.TargetPath)
 }
 
-func TestPublishManifest_SingleFileSidecar(t *testing.T) {
-	dir := t.TempDir()
-	file := filepath.Join(dir, "report.html")
-	require.NoError(t, os.WriteFile(file, []byte("x"), 0o644))
+func TestPublishManifest_DistinctTargetsIsolated(t *testing.T) {
+	sp := NewStatePaths(t.TempDir())
 
-	require.NoError(t, WritePublishManifest(file, &PublishManifest{MiaodaAppID: "app_y"}))
+	require.NoError(t, WritePublishManifest(sp, "/a/report.html", &PublishManifest{MiaodaAppID: "app_a"}))
+	require.NoError(t, WritePublishManifest(sp, "/b/report.html", &PublishManifest{MiaodaAppID: "app_b"}))
 
-	// 边车文件落在文件旁
-	_, statErr := os.Stat(file + publishManifestName)
-	require.NoError(t, statErr)
-
-	got, err := ReadPublishManifest(file)
+	gotA, err := ReadPublishManifest(sp, "/a/report.html")
 	require.NoError(t, err)
-	require.NotNil(t, got)
-	assert.Equal(t, "app_y", got.MiaodaAppID)
+	require.NotNil(t, gotA)
+	assert.Equal(t, "app_a", gotA.MiaodaAppID)
+
+	gotB, err := ReadPublishManifest(sp, "/b/report.html")
+	require.NoError(t, err)
+	require.NotNil(t, gotB)
+	assert.Equal(t, "app_b", gotB.MiaodaAppID)
 }
 
 func TestBuildMiaodaTarball_SkipsManifest(t *testing.T) {
 	dir := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "index.html"), []byte("x"), 0o644))
-	require.NoError(t, WritePublishManifest(dir, &PublishManifest{MiaodaAppID: "app_z"}))
+	// 模拟历史残留的旧边车文件（中心化后不再生成，但需确保不会被打进产物 tar）
+	require.NoError(t, os.WriteFile(filepath.Join(dir, publishManifestName), []byte("stale"), 0o644))
 
 	data, err := buildMiaodaTarball(dir)
 	require.NoError(t, err)

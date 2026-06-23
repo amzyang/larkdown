@@ -30,6 +30,15 @@ func handlePublishCommand(path string) error {
 		return err
 	}
 
+	sp, err := core.DefaultStatePaths()
+	if err != nil {
+		return err
+	}
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return err
+	}
+
 	ctx := context.Background()
 	client := createClientFromConfig(ctx, config, configPath)
 	if !client.HasUserToken() {
@@ -40,7 +49,7 @@ func handlePublishCommand(path string) error {
 	appID := core.ExtractMiaodaAppID(publishOpts.appID)
 	var manifest *core.PublishManifest
 	if appID == "" && !publishOpts.forceNew {
-		if manifest, err = core.ReadPublishManifest(path); err != nil {
+		if manifest, err = core.ReadPublishManifest(sp, absPath); err != nil {
 			log.Printf("warning: 读取发布记录失败: %v", err)
 		}
 		if manifest != nil {
@@ -73,7 +82,7 @@ func handlePublishCommand(path string) error {
 	}
 
 	// 写回发布记录，供下次重新发布复用
-	if werr := core.WritePublishManifest(path, &core.PublishManifest{
+	if werr := core.WritePublishManifest(sp, absPath, &core.PublishManifest{
 		MiaodaAppID: result.AppID,
 		MiaodaURL:   result.URL,
 		Name:        name,

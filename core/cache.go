@@ -22,14 +22,18 @@ type ImageCache struct {
 	boardsCacheDir string
 }
 
-// NewImageCache 创建图片缓存实例，缓存目录为 ~/.cache/feishu2md/images/
+// NewImageCache 创建图片缓存实例，缓存目录为 ~/.cache/feishu2md/{images,files,whiteboards}/
 func NewImageCache() *ImageCache {
-	cacheDir, _ := os.UserCacheDir()
-	baseDir := filepath.Join(cacheDir, "feishu2md")
+	cp, _ := DefaultCachePaths()
+	return NewImageCacheWithPaths(cp)
+}
+
+// NewImageCacheWithPaths 用注入的 CachePaths 构造（测试传临时目录）。
+func NewImageCacheWithPaths(cp CachePaths) *ImageCache {
 	return &ImageCache{
-		cacheDir:       filepath.Join(baseDir, "images"),
-		filesCacheDir:  filepath.Join(baseDir, "files"),
-		boardsCacheDir: filepath.Join(baseDir, "whiteboards"),
+		cacheDir:       cp.ImagesDir(),
+		filesCacheDir:  cp.FilesDir(),
+		boardsCacheDir: cp.WhiteboardsDir(),
 	}
 }
 

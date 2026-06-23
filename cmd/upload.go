@@ -34,7 +34,10 @@ func handleUploadCommand(filePath string) error {
 	client := createClientFromConfig(ctx, config, configPath)
 
 	// 创建上传器
-	uploader := core.NewUploader(client)
+	uploader, err := core.NewUploader(client)
+	if err != nil {
+		return err
+	}
 
 	// 执行上传
 	result, err := uploader.Upload(ctx, filePath, core.UploadOptions{

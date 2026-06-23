@@ -1,7 +1,7 @@
 package core
 
 import (
-	"path/filepath"
+	"os"
 	"testing"
 
 	"github.com/chyroc/lark"
@@ -19,15 +19,11 @@ func TestCanonicalBoardSourceHash(t *testing.T) {
 	assert.NotEqual(t, canonicalBoardSourceHash(base), canonicalBoardSourceHash("@startuml\nA -> C\n@enduml"))
 }
 
-func TestBoardManifestPath(t *testing.T) {
-	assert.Equal(t, "/x/y.md.feishu2md-board.yaml", BoardManifestPath("/x/y.md"))
-}
-
 func TestBoardManifestReadWriteRoundTrip(t *testing.T) {
-	mdFile := filepath.Join(t.TempDir(), "doc.md")
+	sp := NewStatePaths(t.TempDir())
 
 	// 不存在 → (nil, nil)
-	m, err := ReadBoardManifest(mdFile)
+	m, err := ReadBoardManifest(sp, "doc123")
 	assert.NoError(t, err)
 	assert.Nil(t, m)
 
@@ -35,11 +31,21 @@ func TestBoardManifestReadWriteRoundTrip(t *testing.T) {
 		DocumentID: "doc123",
 		Boards:     []BoardMapping{{SourceHash: "abc", Token: "WB_tok"}},
 	}
-	assert.NoError(t, WriteBoardManifest(mdFile, want))
+	assert.NoError(t, WriteBoardManifest(sp, "doc123", want))
 
-	got, err := ReadBoardManifest(mdFile)
+	// 落在中心 store boards/<document_id>.yaml，且带用途说明注释头
+	raw, err := os.ReadFile(sp.BoardManifestFile("doc123"))
+	assert.NoError(t, err)
+	assert.Contains(t, string(raw), "# larkdown 画板映射记录")
+
+	got, err := ReadBoardManifest(sp, "doc123")
 	assert.NoError(t, err)
 	assert.Equal(t, want, got)
+
+	// 不同 document_id 互不干扰
+	other, err := ReadBoardManifest(sp, "doc-other")
+	assert.NoError(t, err)
+	assert.Nil(t, other)
 }
 
 func TestBoardManifestLookupToken(t *testing.T) {

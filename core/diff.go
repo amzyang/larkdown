@@ -438,7 +438,7 @@ func SignatureFromLocalEntry(result *ConvertResult, idx int) BlockSignature {
 }
 
 // boardCodeHash 取本地第 idx 个 board 块对应的 PlantUML 源码哈希（无 token 白板专用）。
-// 复用 canonicalBoardSourceHash，与画板映射边车（board_manifest.go）的 key 口径同源。
+// 复用 canonicalBoardSourceHash，与画板映射记录（board_manifest.go）的 key 口径同源。
 func boardCodeHash(result *ConvertResult, idx int) string {
 	for i, bIdx := range result.BoardIndices {
 		if bIdx == idx {

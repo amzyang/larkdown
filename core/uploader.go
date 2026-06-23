@@ -19,18 +19,30 @@ import (
 // Uploader Wiki 上传器
 type Uploader struct {
 	client *Client
+	// statePaths 定位画板映射等持久状态的中心 store 目录（默认 os.UserConfigDir()/feishu2md）。
+	statePaths StatePaths
 	// mentionUserNames 当前上传文档的 @人 user-id → 显示名映射，
 	// 用于写入失败时把 mention 降级为纯文本。每次 writeContent/incrementalUpdate 前设置。
 	mentionUserNames map[string]string
 	// pendingBoardMappings 累积本次上传新建画板的「PlantUML 源 hash → token」映射，
-	// 由 fillBoards 填充，在 incrementalUpdate/fullUpdate 末尾写入 board manifest 边车
+	// 由 fillBoards 填充，在 incrementalUpdate/fullUpdate 末尾写入画板映射记录
 	// （board_manifest.go），供后续上传跳过未变画板。每次 upload 命令新建 Uploader，无需重置。
 	pendingBoardMappings []BoardMapping
 }
 
-// NewUploader 创建上传器
-func NewUploader(client *Client) *Uploader {
-	return &Uploader{client: client}
+// NewUploader 创建上传器（画板映射等持久状态落默认配置目录）。
+// 定位配置目录失败时返回错误，避免静默回退到相对路径而把状态写进工作目录。
+func NewUploader(client *Client) (*Uploader, error) {
+	sp, err := DefaultStatePaths()
+	if err != nil {
+		return nil, err
+	}
+	return &Uploader{client: client, statePaths: sp}, nil
+}
+
+// NewUploaderWithPaths 用注入的 StatePaths 构造上传器（测试传临时目录）。
+func NewUploaderWithPaths(client *Client, sp StatePaths) *Uploader {
+	return &Uploader{client: client, statePaths: sp}
 }
 
 // UploadOptions 上传选项
@@ -214,7 +226,7 @@ func (u *Uploader) fullUpdate(ctx context.Context, documentID, filePath, body st
 		}
 		resolveEntityTokens(localResult, remoteEntityTokens(rootBlocks, blockMap))
 		// 复用未变 plantuml 画板的历史 token，使其计入 referencedTokens 而被保留、不重建
-		u.applyBoardTokenMappings(localResult, documentID, filePath, rootBlocks)
+		u.applyBoardTokenMappings(localResult, documentID, rootBlocks)
 		referencedTokens = localEntityTokenSet(localResult)
 	}
 
@@ -236,7 +248,7 @@ func (u *Uploader) fullUpdate(ctx context.Context, documentID, filePath, body st
 		u.replacePreservedEntities(ctx, documentID, filePath, rootBlocks, blockMap, localResult)
 		// best-effort 校正被保留实体位置（失败回退：实体已保留，仅位置可能不对齐）
 		u.reconcileEntityPositions(ctx, documentID, localResult)
-		u.persistBoardMappings(documentID, filePath)
+		u.persistBoardMappings(documentID)
 	}
 
 	return nil
@@ -383,7 +395,7 @@ func (u *Uploader) incrementalUpdate(ctx context.Context, documentID, filePath, 
 	u.mentionUserNames = localResult.MentionUserNames
 	resolveEntityTokens(localResult, remoteEntityTokens(rootBlocks, blockMap))
 	// 对无 token 的本地 plantuml 画板，按源 hash 复用历史 token（源未变则跳过重建）
-	u.applyBoardTokenMappings(localResult, documentID, filePath, rootBlocks)
+	u.applyBoardTokenMappings(localResult, documentID, rootBlocks)
 
 	// 3. 快速路径：远程为空 → 直接全量写入
 	if len(rootBlocks) == 0 {
@@ -395,7 +407,7 @@ func (u *Uploader) incrementalUpdate(ctx context.Context, documentID, filePath, 
 			if err := u.writeContent(ctx, documentID, filePath, bodyWithoutTitle); err != nil {
 				return err
 			}
-			u.persistBoardMappings(documentID, filePath)
+			u.persistBoardMappings(documentID)
 		}
 		return nil
 	}
@@ -550,8 +562,8 @@ func (u *Uploader) incrementalUpdate(ctx context.Context, documentID, filePath, 
 	// 9. best-effort 校正 round-trip 实体位置（白板/图片/文件被重排时移到 markdown 指定位置）
 	u.reconcileEntityPositions(ctx, documentID, localResult)
 
-	// 10. 写回本次新建画板的「源 hash → token」映射边车（供后续上传跳过未变画板）
-	u.persistBoardMappings(documentID, filePath)
+	// 10. 写回本次新建画板的「源 hash → token」映射记录（供后续上传跳过未变画板）
+	u.persistBoardMappings(documentID)
 
 	// docs_ai 原地替换有失败：文档已尽力更新（仅这些块保留旧形态），以错误收尾让用户重跑。
 	if docsAIFailures > 0 {
@@ -1641,7 +1653,7 @@ func (u *Uploader) fillBoards(ctx context.Context, result *ConvertResult, insert
 		}
 
 		fmt.Printf("已填充 PlantUML 画板: %s\n", boardToken)
-		// 记录「源 hash → token」映射，供末尾写入 board manifest 边车（源未变时下次跳过重建）
+		// 记录「源 hash → token」映射，供末尾写入画板映射记录（源未变时下次跳过重建）
 		u.pendingBoardMappings = append(u.pendingBoardMappings, BoardMapping{
 			SourceHash: canonicalBoardSourceHash(result.BoardCodes[i]),
 			Token:      boardToken,
@@ -1649,10 +1661,13 @@ func (u *Uploader) fillBoards(ctx context.Context, result *ConvertResult, insert
 	}
 }
 
-// applyBoardTokenMappings 读 board manifest 边车，对无 token 的本地 plantuml board 写回历史 token
+// applyBoardTokenMappings 读画板映射记录，对无 token 的本地 plantuml board 写回历史 token
 // （仅当 token 仍存在于远程）。命中后该 board 签名与远程 Equal，增量更新跳过重建。
-func (u *Uploader) applyBoardTokenMappings(localResult *ConvertResult, documentID, mdFile string, rootBlocks []*lark.DocxBlock) {
-	manifest, err := ReadBoardManifest(mdFile)
+func (u *Uploader) applyBoardTokenMappings(localResult *ConvertResult, documentID string, rootBlocks []*lark.DocxBlock) {
+	if documentID == "" {
+		return
+	}
+	manifest, err := ReadBoardManifest(u.statePaths, documentID)
 	if err != nil || manifest == nil {
 		return
 	}
@@ -1661,21 +1676,21 @@ func (u *Uploader) applyBoardTokenMappings(localResult *ConvertResult, documentI
 	}
 }
 
-// persistBoardMappings 把本次新建画板累积的映射 upsert 进 board manifest 边车并落盘。
+// persistBoardMappings 把本次新建画板累积的映射 upsert 进画板映射记录并落盘。
 // 无新建画板时不写文件，避免无谓改动版本库。
-func (u *Uploader) persistBoardMappings(documentID, mdFile string) {
-	if len(u.pendingBoardMappings) == 0 {
+func (u *Uploader) persistBoardMappings(documentID string) {
+	if len(u.pendingBoardMappings) == 0 || documentID == "" {
 		return
 	}
-	manifest, err := ReadBoardManifest(mdFile)
+	manifest, err := ReadBoardManifest(u.statePaths, documentID)
 	if err != nil || manifest == nil {
 		manifest = &BoardManifest{}
 	}
 	for _, m := range u.pendingBoardMappings {
 		manifest.upsert(documentID, m.SourceHash, m.Token)
 	}
-	if err := WriteBoardManifest(mdFile, manifest); err != nil {
-		fmt.Printf("警告: 写入画板映射边车失败: %v\n", err)
+	if err := WriteBoardManifest(u.statePaths, documentID, manifest); err != nil {
+		fmt.Printf("警告: 写入画板映射记录失败: %v\n", err)
 	}
 }
 

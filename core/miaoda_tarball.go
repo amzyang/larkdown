@@ -26,7 +26,7 @@ var miaodaSkipNames = map[string]bool{
 	".git":              true,
 	"node_modules":      true,
 	".DS_Store":         true,
-	publishManifestName: true, // 发布状态边车文件，不应打进产物
+	publishManifestName: true, // 旧版发布记录残留文件，不应打进产物
 }
 
 // miaodaFile 是待打包的单个文件

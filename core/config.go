@@ -3,7 +3,6 @@ package core
 import (
 	"encoding/json"
 	"os"
-	"path"
 	"path/filepath"
 	"time"
 )
@@ -59,12 +58,11 @@ func NewConfig(appId, appSecret string) *Config {
 }
 
 func GetConfigFilePath() (string, error) {
-	configPath, err := os.UserConfigDir()
+	sp, err := DefaultStatePaths()
 	if err != nil {
 		return "", err
 	}
-	configFilePath := path.Join(configPath, "feishu2md", "config.json")
-	return configFilePath, nil
+	return sp.ConfigFile(), nil
 }
 
 func ReadConfigFromFile(configPath string) (*Config, error) {

@@ -10,19 +10,15 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// boardManifestSuffix 是画板映射边车文件后缀。单文件形态放在文件旁（<file>.feishu2md-board.yaml）。
-// 字面量保留 feishu2md 前缀，与 CLAUDE.md 的零迁移约定一致。
-const boardManifestSuffix = ".feishu2md-board.yaml"
-
 // boardManifestHeader 是写入文件顶部的注释提示，解释文件用途与删除后果。
-const boardManifestHeader = `# larkdown 画板映射记录 —— 请勿手动删除或重命名
+const boardManifestHeader = `# larkdown 画板映射记录 —— 请勿手动编辑或删除
 #
-# 本文件由 larkdown upload 自动生成与维护，记录本地 PlantUML 源码到飞书画板
-# token 的映射。有了它，PlantUML 源未改动时增量更新会跳过画板、不再每次重建
+# 本文件由 larkdown upload 自动生成与维护，按飞书 document_id 记录本地 PlantUML
+# 源码到飞书画板 token 的映射。源未改动时增量更新据此跳过画板、不再每次重建
 # （重建会令画板 block_id 变化、破坏评论锚点）。删除后下次上传将重建画板并重新
 # 建立映射。
 #
-# 可随产物一并提交到版本库；若不希望提交，请将其加入 .gitignore。
+# 存放于用户配置目录，按 document_id 一文档一文件，不随工作目录或版本库移动。
 `
 
 // BoardManifest 记录某飞书文档下「PlantUML 源 hash → 画板 token」的映射，以 document_id 为 scope。
@@ -50,14 +46,9 @@ func canonicalBoardSourceHash(code string) string {
 	return fmt.Sprintf("%x", sum[:16])
 }
 
-// BoardManifestPath 推导 md 文件对应的画板 manifest 路径：<file>.feishu2md-board.yaml。
-func BoardManifestPath(mdFile string) string {
-	return mdFile + boardManifestSuffix
-}
-
-// ReadBoardManifest 读取 manifest；文件不存在返回 (nil, nil)。
-func ReadBoardManifest(mdFile string) (*BoardManifest, error) {
-	data, err := os.ReadFile(BoardManifestPath(mdFile))
+// ReadBoardManifest 按 document_id 读取中心 store 的画板映射；文件不存在返回 (nil, nil)。
+func ReadBoardManifest(sp StatePaths, documentID string) (*BoardManifest, error) {
+	data, err := os.ReadFile(sp.BoardManifestFile(documentID))
 	if os.IsNotExist(err) {
 		return nil, nil
 	}
@@ -71,13 +62,14 @@ func ReadBoardManifest(mdFile string) (*BoardManifest, error) {
 	return &m, nil
 }
 
-// WriteBoardManifest 写入/刷新 manifest，并在文件顶部附带用途说明注释。
-func WriteBoardManifest(mdFile string, m *BoardManifest) error {
+// WriteBoardManifest 按 document_id 写入/刷新中心 store 的画板映射，文件顶部附用途说明注释。
+// 原子写（writeFileAtomic）避免并发或中断产生半截文件。
+func WriteBoardManifest(sp StatePaths, documentID string, m *BoardManifest) error {
 	body, err := yaml.Marshal(m)
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(BoardManifestPath(mdFile), append([]byte(boardManifestHeader), body...), 0o644)
+	return writeFileAtomic(sp.BoardManifestFile(documentID), append([]byte(boardManifestHeader), body...))
 }
 
 // lookupToken 返回指定 document 下 hash 对应的画板 token；未命中（含 document 不匹配）返回 ""。

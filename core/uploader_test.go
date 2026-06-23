@@ -31,7 +31,7 @@ func mkTextBlock(bt lark.DocxBlockType, content string) *lark.DocxBlock {
 }
 
 func TestLocalBlockMarkdownContent(t *testing.T) {
-	u := NewUploader(nil)
+	u := NewUploaderWithPaths(nil, NewStatePaths(t.TempDir()))
 
 	cases := []struct {
 		bt   lark.DocxBlockType
@@ -55,7 +55,7 @@ func TestLocalBlockMarkdownContent(t *testing.T) {
 }
 
 func TestLocalBlockMarkdownContent_Todo(t *testing.T) {
-	u := NewUploader(nil)
+	u := NewUploaderWithPaths(nil, NewStatePaths(t.TempDir()))
 
 	done := mkTextBlock(lark.DocxBlockTypeTodo, "task")
 	done.Todo.Style = &lark.DocxTextStyle{Done: true}
