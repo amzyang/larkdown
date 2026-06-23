@@ -591,9 +591,9 @@ func TestCanonicalTextContent_StyleWhitespaceHoisted(t *testing.T) {
 		return &lark.DocxTextElement{TextRun: &lark.DocxTextElementTextRun{Content: c}}
 	}
 	// 远程：bold 内容带尾随空格
-	remote := &lark.DocxBlockText{Elements: []*lark.DocxTextElement{bold("下载 feishu2md "), plain("说明")}}
+	remote := &lark.DocxBlockText{Elements: []*lark.DocxTextElement{bold("下载 larkdown "), plain("说明")}}
 	// 本地：parser 外提空格后，bold 不含空格、空格归入后续普通文本
-	local := &lark.DocxBlockText{Elements: []*lark.DocxTextElement{bold("下载 feishu2md"), plain(" 说明")}}
+	local := &lark.DocxBlockText{Elements: []*lark.DocxTextElement{bold("下载 larkdown"), plain(" 说明")}}
 	assert.Equal(t, canonicalTextContent(remote), canonicalTextContent(local))
 
 	// 全空白的 bold 元素不产生样式标记（等价于普通空格）

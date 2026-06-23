@@ -1195,7 +1195,7 @@ func TestConvertFromFile(t *testing.T) {
 				require.NotNil(t, parent1.Text)
 				require.NotNil(t, parent1.Text.Style)
 				assert.True(t, parent1.Text.Style.Folded)
-				assert.Contains(t, collectTextContent(parent1.Text.Elements), "feishu2md 支持的文档类型")
+				assert.Contains(t, collectTextContent(parent1.Text.Elements), "larkdown 支持的文档类型")
 				assert.Len(t, parent1.Children, 5)
 				for i := 1; i <= 5; i++ {
 					assert.Equal(t, lark.DocxBlockTypeBullet, dg1.Descendants[i].BlockType, "dg1 child %d", i)
@@ -1355,13 +1355,13 @@ func TestConvertFromFile(t *testing.T) {
 					return s.BackgroundColor == lark.DocxFontBackgroundColorLightYellow
 				}), "should have highlight from <mark>")
 
-				// <p> 中 <strong>feishu2md</strong> → Bold，与前后文本在同一 block
-				assert.True(t, hasStyle(result.TopBlocks[5], "feishu2md", func(s *lark.DocxTextElementStyle) bool { return s.Bold }),
+				// <p> 中 <strong>larkdown</strong> → Bold，与前后文本在同一 block
+				assert.True(t, hasStyle(result.TopBlocks[5], "larkdown", func(s *lark.DocxTextElementStyle) bool { return s.Bold }),
 					"should have Bold from <strong> in <p>")
 				assert.NotNil(t, findElement(result.TopBlocks[5], "项目的功能矩阵"),
-					"normal text should be in same block as bold feishu2md")
+					"normal text should be in same block as bold larkdown")
 
-				// 核心验证：<strong>注意：</strong>... <code>feishu2md config</code> 命令。
+				// 核心验证：<strong>注意：</strong>... <code>larkdown config</code> 命令。
 				// 应在同一个 text block 中，包含 4 个 TextElement，样式正确
 				var noticeBlock *lark.DocxBlock
 				for _, b := range result.TopBlocks {
@@ -1377,8 +1377,8 @@ func TestConvertFromFile(t *testing.T) {
 					"'注意：' should be bold")
 				assert.NotNil(t, findElement(noticeBlock, "配置表单仅作展示用途"),
 					"normal text should be in same block")
-				assert.True(t, hasStyle(noticeBlock, "feishu2md config", func(s *lark.DocxTextElementStyle) bool { return s.InlineCode }),
-					"'feishu2md config' should be InlineCode")
+				assert.True(t, hasStyle(noticeBlock, "larkdown config", func(s *lark.DocxTextElementStyle) bool { return s.InlineCode }),
+					"'larkdown config' should be InlineCode")
 
 				// <dd> 中 <code> 标签分组验证
 				assert.True(t, hasStyle(result.TopBlocks[8], "tenant_access_token", func(s *lark.DocxTextElementStyle) bool { return s.InlineCode }),

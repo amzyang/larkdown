@@ -424,7 +424,7 @@
         "elements": [
           {
             "text_run": {
-              "content": "使用 Feishu2Md 工具",
+              "content": "使用 larkdown 工具",
               "text_element_style": {}
             }
           }
@@ -473,7 +473,7 @@
           },
           {
             "text_run": {
-              "content": " 。因此，我决定基于这个库开发一个下载工具，也就是小标题的 Feishu2Md 工具。",
+              "content": " 。因此，我决定基于这个库开发一个下载工具，也就是小标题的 larkdown 工具。",
               "text_element_style": {}
             }
           }
@@ -490,7 +490,7 @@
         "elements": [
           {
             "text_run": {
-              "content": "Feishu2Md 已开源并发布在 Github中： https://github.com/Wsine/feishu2md",
+              "content": "larkdown 已开源并发布在 Github中： https://github.com/Wsine/feishu2md",
               "text_element_style": {}
             }
           }
@@ -507,7 +507,7 @@
         "elements": [
           {
             "text_run": {
-              "content": "下载 feishu2md ",
+              "content": "下载 larkdown ",
               "text_element_style": {
                 "bold": true
               }
@@ -545,7 +545,7 @@
           },
           {
             "text_run": {
-              "content": " 中下载，从压缩包中提取自己平台的 feishu2md 二进制可执行文件即可，建议放置在 PATH 路径中。",
+              "content": " 中下载，从压缩包中提取自己平台的 larkdown 二进制可执行文件即可，建议放置在 PATH 路径中。",
               "text_element_style": {}
             }
           }
@@ -570,7 +570,7 @@
           },
           {
             "text_run": {
-              "content": " - feishu2md 需要使用飞书的 Open API 提取飞书文档，因此需要配置相应的 App ID 和 App Secret 进行 API 的调用。首先，进入飞书的 ",
+              "content": " - larkdown 需要使用飞书的 Open API 提取飞书文档，因此需要配置相应的 App ID 和 App Secret 进行 API 的调用。首先，进入飞书的 ",
               "text_element_style": {}
             }
           },
@@ -620,7 +620,7 @@
           },
           {
             "text_run": {
-              "content": "feishu2md --config",
+              "content": "larkdown --config",
               "text_element_style": {
                 "inline_code": true
               }
@@ -744,7 +744,7 @@
           },
           {
             "text_run": {
-              "content": "feishu2md \u003c你的飞书文档链接\u003e",
+              "content": "larkdown \u003c你的飞书文档链接\u003e",
               "text_element_style": {
                 "inline_code": true
               }
@@ -800,7 +800,7 @@
         "elements": [
           {
             "text_run": {
-              "content": "feishu2md ",
+              "content": "larkdown ",
               "text_element_style": {}
             }
           },

@@ -1,7 +1,7 @@
 
 
 <details>
-<summary>点击展开：feishu2md 支持的文档类型</summary>
+<summary>点击展开：larkdown 支持的文档类型</summary>
 
 - DocX（新版文档）
 - Wiki（知识库文档）

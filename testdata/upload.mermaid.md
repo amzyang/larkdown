@@ -5,7 +5,7 @@ graph TD
     B -->|单文档| C[下载 DocX]
     B -->|文件夹| D[批量下载]
     B -->|Wiki| E[遍历知识库]
-    C --> F[转换为 Markdown]
+    C --> F[转换为 MD]
     D --> F
     E --> F
     F --> G[保存到本地]

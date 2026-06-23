@@ -1,16 +1,12 @@
 
-
-
-
-
 ```plantuml
 @startuml
 actor 用户
-participant "feishu2md CLI" as CLI
+participant "larkdown CLI" as CLI
 participant "飞书 API" as API
 participant "本地文件系统" as FS
 
-用户 -> CLI: feishu2md download <url>
+用户 -> CLI: larkdown download <url>
 CLI -> API: 获取文档内容
 API --> CLI: 返回 DocX 块
 CLI -> CLI: 转换为 Markdown

@@ -35,19 +35,19 @@
 
 
 
-## 使用 Feishu2Md 工具
+## 使用 larkdown 工具
 
-在进行了大量的搜索后，我其实也没有找到现有的转换工具能够转换飞书文档为 Markdown 文件下载的。但是，十分幸运，我碰巧找到了 [chyroc](https://github.com/chyroc) 使用飞书的 Open API 实现的飞书文档解析器 [lark_docs_md](https://github.com/chyroc/lark_docs_md) 。因此，我决定基于这个库开发一个下载工具，也就是小标题的 Feishu2Md 工具。
+在进行了大量的搜索后，我其实也没有找到现有的转换工具能够转换飞书文档为 Markdown 文件下载的。但是，十分幸运，我碰巧找到了 [chyroc](https://github.com/chyroc) 使用飞书的 Open API 实现的飞书文档解析器 [lark_docs_md](https://github.com/chyroc/lark_docs_md) 。因此，我决定基于这个库开发一个下载工具，也就是小标题的 larkdown 工具。
 
-Feishu2Md 已开源并发布在 Github中： https://github.com/Wsine/feishu2md
+larkdown 已开源并发布在 Github中： https://github.com/Wsine/feishu2md
 
-**下载 feishu2md** - 得益于 golang 本身的多平台编译特性，我已经为 Windows/Linux/Mac 都预编译了该工具的可执行文件，可以直接从 [Github Release](https://github.com/Wsine/feishu2md/releases) 中下载，从压缩包中提取自己平台的 feishu2md 二进制可执行文件即可，建议放置在 PATH 路径中。
+**下载 larkdown** - 得益于 golang 本身的多平台编译特性，我已经为 Windows/Linux/Mac 都预编译了该工具的可执行文件，可以直接从 [Github Release](https://github.com/Wsine/feishu2md/releases) 中下载，从压缩包中提取自己平台的 larkdown 二进制可执行文件即可，建议放置在 PATH 路径中。
 
-**生成配置文件** - feishu2md 需要使用飞书的 Open API 提取飞书文档，因此需要配置相应的 App ID 和 App Secret 进行 API 的调用。首先，进入飞书的 [开发者后台](https://open.feishu.cn/app) 然后创建一个企业自建应用，信息可以任意填，发布但不必等待审核通过。然后在创建的应用页面中，找到「凭证与基础信息」，即可找到 App ID 和 App Secret 信息。
+**生成配置文件** - larkdown 需要使用飞书的 Open API 提取飞书文档，因此需要配置相应的 App ID 和 App Secret 进行 API 的调用。首先，进入飞书的 [开发者后台](https://open.feishu.cn/app) 然后创建一个企业自建应用，信息可以任意填，发布但不必等待审核通过。然后在创建的应用页面中，找到「凭证与基础信息」，即可找到 App ID 和 App Secret 信息。
 
 ![](boxcnh7JKLbFaWhHKHveYzGMNZg)
 
-执行 `feishu2md --config` 命令会生成该工具的配置文件。生成的配置文件路径为：
+执行 `larkdown --config` 命令会生成该工具的配置文件。生成的配置文件路径为：
 
 - Windows: %AppData%/feishu2md/config.json
 - Linux: $XDG_CONFIG_HOME/feishu2md/config.json
@@ -57,14 +57,14 @@ Feishu2Md 已开源并发布在 Github中： https://github.com/Wsine/feishu2md
 
 将 App ID 和 App Secret 填入配置文件 config.json 中的相应位置。另外，image_dir 配置项为存放文档中图片的文件夹名称。
 
-**下载飞书文档** - 通过 `feishu2md <你的飞书文档链接>` 直接下载，文档链接可以通过 分享 > 开启链接分享 > 复制链接 获得。
+**下载飞书文档** - 通过 `larkdown <你的飞书文档链接>` 直接下载，文档链接可以通过 分享 > 开启链接分享 > 复制链接 获得。
 
 ![](boxcnqt9YDTirkKlTATlQI025Ig)
 
 调用示例：
 
 ```bash
-feishu2md <cite type="doc" doc-id="doccnrOvzeQ8BSnfsXj8jwJHC3c" obj-type="doc" href="https://oaztcemx3k.feishu.cn/docs/doccnrOvzeQ8BSnfsXj8jwJHC3c#">一日一技：飞书文档转换为 Markdown</cite>
+larkdown <cite type="doc" doc-id="doccnrOvzeQ8BSnfsXj8jwJHC3c" obj-type="doc" href="https://oaztcemx3k.feishu.cn/docs/doccnrOvzeQ8BSnfsXj8jwJHC3c#">一日一技：飞书文档转换为 Markdown</cite>
 ```
 
 ![](boxcnAb2MgMQoUMDLLf3ySogueh)

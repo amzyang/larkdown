@@ -8,7 +8,7 @@
 
 <div style="border: 1px solid #e0e0e0; padding: 16px; border-radius: 8px; background-color: #fafafa;">
   <h3>项目概览面板</h3>
-  <p>以下是 <strong>feishu2md</strong> 项目的功能矩阵和配置说明。</p>
+  <p>以下是 <strong>larkdown</strong> 项目的功能矩阵和配置说明。</p>
 
   <table border="1" cellpadding="8" cellspacing="0" style="border-collapse: collapse; width: 100%;">
     <thead>
@@ -54,7 +54,7 @@
   </dl>
 
   <div style="margin-top: 12px; padding: 12px; background-color: #fff3cd; border-left: 4px solid #ffc107;">
-    <strong>注意：</strong>配置表单仅作展示用途，实际配置请使用 <code>feishu2md config</code> 命令。
+    <strong>注意：</strong>配置表单仅作展示用途，实际配置请使用 <code>larkdown config</code> 命令。
     <form style="margin-top: 8px;">
       <div style="margin-bottom: 8px;">
         <label for="appId">App ID：</label>

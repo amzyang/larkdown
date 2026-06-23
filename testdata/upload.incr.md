@@ -127,7 +127,7 @@ $$
 ## 折叠（可折叠内容）
 
 <details>
-<summary>点击展开：feishu2md 支持的文档类型</summary>
+<summary>点击展开：larkdown 支持的文档类型</summary>
 
 - DocX（新版文档）
 - Wiki（知识库文档）
@@ -162,7 +162,7 @@ $$
 
 <div style="border: 1px solid #e0e0e0; padding: 16px; border-radius: 8px; background-color: #fafafa;">
   <h3>项目概览面板</h3>
-  <p>以下是 <strong>feishu2md</strong> 项目的功能矩阵和配置说明。</p>
+  <p>以下是 <strong>larkdown</strong> 项目的功能矩阵和配置说明。</p>
 
   <table border="1" cellpadding="8" cellspacing="0" style="border-collapse: collapse; width: 100%;">
     <thead>
@@ -208,7 +208,7 @@ $$
   </dl>
 
   <div style="margin-top: 12px; padding: 12px; background-color: #fff3cd; border-left: 4px solid #ffc107;">
-    <strong>注意：</strong>配置表单仅作展示用途，实际配置请使用 <code>feishu2md config</code> 命令。
+    <strong>注意：</strong>配置表单仅作展示用途，实际配置请使用 <code>larkdown config</code> 命令。
     <form style="margin-top: 8px;">
       <div style="margin-bottom: 8px;">
         <label for="appId">App ID：</label>
@@ -274,11 +274,11 @@ graph TD
 ```plantuml
 @startuml
 actor 用户
-participant "feishu2md CLI" as CLI
+participant "larkdown CLI" as CLI
 participant "飞书 API" as API
 participant "本地文件系统" as FS
 
-用户 -> CLI: feishu2md download <url>
+用户 -> CLI: larkdown download <url>
 CLI -> API: 获取文档内容
 API --> CLI: 返回 DocX 块
 CLI -> CLI: 转换为 Markdown
