@@ -62,8 +62,8 @@ func createClientFromConfig(ctx context.Context, config *core.Config, configPath
 	return core.NewClient(config.Feishu.AppId, config.Feishu.AppSecret, globalOpts.clientOpts)
 }
 
-func main() {
-	cmd := &cli.Command{
+func newRootCommand() *cli.Command {
+	return &cli.Command{
 		Name:                            "larkdown",
 		Version:                         strings.TrimSpace(string(version)),
 		Usage:                           "Feishu/Lark documents <-> Markdown: download, upload, sync and publish",
@@ -226,8 +226,10 @@ func main() {
 			},
 		},
 	}
+}
 
-	if err := cmd.Run(context.Background(), os.Args); err != nil {
+func main() {
+	if err := newRootCommand().Run(context.Background(), os.Args); err != nil {
 		log.Fatal(err)
 	}
 }
