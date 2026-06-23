@@ -679,7 +679,7 @@ func (c *converter) convertHTMLTable(n *html.Node) {
 			Property: &lark.DocxBlockTableProperty{
 				RowSize:     int64(numRows),
 				ColumnSize:  int64(numCols),
-				ColumnWidth: calcColumnWidths(colMaxWidths, tablePageWidth),
+				ColumnWidth: calcColumnWidths(colMaxWidths),
 				HeaderRow:   true,
 			},
 		},

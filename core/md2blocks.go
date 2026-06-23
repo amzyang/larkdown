@@ -1188,7 +1188,7 @@ func (c *converter) buildTableDescendants(n *east.Table) (string, []*lark.DocxBl
 			Property: &lark.DocxBlockTableProperty{
 				RowSize:     int64(rows),
 				ColumnSize:  int64(cols),
-				ColumnWidth: calcColumnWidths(colMaxWidths, tablePageWidth),
+				ColumnWidth: calcColumnWidths(colMaxWidths),
 				HeaderRow:   true,
 			},
 		},
