@@ -4,7 +4,6 @@ go 1.24.0
 
 require (
 	github.com/chyroc/lark v0.0.114-0.20260226061401-82ff1e3935ce
-	github.com/joho/godotenv v1.5.1
 	github.com/urfave/cli/v3 v3.10.0
 )
 
