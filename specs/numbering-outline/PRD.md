@@ -1,6 +1,6 @@
 # download/upload support numbering-outline
 
-online version: <https://example.feishu.cn/wiki/JAmgwKkY0iA6SxkgqbEcqFmvnbd>
+online version: <https://feishu.cn/wiki/JAmgwKkY0iA6SxkgqbEcqFmvnbd>
 online visual: ![numbering-outline](../../assets/numbering-outline.png)
 download local: @testdata/numbering-outline.md
 

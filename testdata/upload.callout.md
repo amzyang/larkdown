@@ -7,5 +7,5 @@
 > [!TIP]
 > 这是一个技巧提示，分享实用的小窍门。飞书对应绿色高亮块。
 <!--
-source: https://example.feishu.cn/wiki/NDCHw5wG9iMopskOSL6cOSWMnXg
+source: https://feishu.cn/wiki/NDCHw5wG9iMopskOSL6cOSWMnXg
 -->

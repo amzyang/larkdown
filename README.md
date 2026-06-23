@@ -301,5 +301,5 @@ larkdown dl "<your-url-here>" --debug &> debug.log
 
 - 原项目 [Wsine/feishu2md](https://github.com/Wsine/feishu2md)
 <!--
-source: https://example.feishu.cn/wiki/VMfkwOLYriUDZukOp3uczdBEn9b?fromScene=spaceOverview
+source: https://feishu.cn/wiki/VMfkwOLYriUDZukOp3uczdBEn9b?fromScene=spaceOverview
 -->

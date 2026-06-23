@@ -3,5 +3,5 @@
 - [ ] 支持上传 Markdown 到飞书
 - [ ] 支持增量更新
 <!--
-source: https://example.feishu.cn/wiki/BouywE9qYiW5yikUpJlcRIxPnpf
+source: https://feishu.cn/wiki/BouywE9qYiW5yikUpJlcRIxPnpf
 -->

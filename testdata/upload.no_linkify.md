@@ -10,5 +10,5 @@
 
 raw domain: `www.baidu.com` `baidu.com`
 <!--
-source: https://example.feishu.cn/wiki/E1P5wB4iIiNvHdkPZA5c4I4hnQd
+source: https://feishu.cn/wiki/E1P5wB4iIiNvHdkPZA5c4I4hnQd
 -->

@@ -10,5 +10,5 @@
 
 **Markdown 粗体** 和 <span style="color: green">绿色 span</span> 混合使用。
 <!--
-source: https://example.feishu.cn/wiki/APUdweLA7i7bFgkfX7Lcj0qcn3d
+source: https://feishu.cn/wiki/APUdweLA7i7bFgkfX7Lcj0qcn3d
 -->

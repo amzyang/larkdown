@@ -5,5 +5,5 @@
    2. 支持批量文件夹下载
    3. 支持 Wiki 下载
 <!--
-source: https://example.feishu.cn/wiki/JYYtwHOcqizO15kiWHKcbX39nbd
+source: https://feishu.cn/wiki/JYYtwHOcqizO15kiWHKcbX39nbd
 -->

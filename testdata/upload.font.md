@@ -6,5 +6,5 @@
 
 **Markdown 粗体** 和 <font color="green">绿色 font</font> 混合使用。
 <!--
-source: https://example.feishu.cn/wiki/APUdweLA7i7bFgkfX7Lcj0qcn3d
+source: https://feishu.cn/wiki/APUdweLA7i7bFgkfX7Lcj0qcn3d
 -->

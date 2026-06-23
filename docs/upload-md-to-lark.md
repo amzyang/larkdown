@@ -57,7 +57,7 @@
 # 文档内容...
 
 <!--
-source: https://example.feishu.cn/wiki/xxxxxx
+source: https://feishu.cn/wiki/xxxxxx
 revision_id: 123
 -->
 ```

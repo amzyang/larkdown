@@ -15,9 +15,9 @@ func TestParseFrontMatter(t *testing.T) {
 	}{
 		{
 			name:    "新格式：完整 frontmatter",
-			content: "# 正文标题\n\n这是正文内容。\n\n<!--\nsource: https://example.feishu.cn/wiki/abc123\n-->\n",
+			content: "# 正文标题\n\n这是正文内容。\n\n<!--\nsource: https://feishu.cn/wiki/abc123\n-->\n",
 			wantFM: &FrontMatter{
-				Source: "https://example.feishu.cn/wiki/abc123",
+				Source: "https://feishu.cn/wiki/abc123",
 			},
 			wantBody:    "# 正文标题\n\n这是正文内容。\n",
 			wantErr:     false,
@@ -52,14 +52,14 @@ func TestParseFrontMatter(t *testing.T) {
 		{
 			name: "旧格式向后兼容",
 			content: `---
-source: https://example.feishu.cn/wiki/abc123
+source: https://feishu.cn/wiki/abc123
 ---
 # 正文标题
 
 这是正文内容。
 `,
 			wantFM: &FrontMatter{
-				Source: "https://example.feishu.cn/wiki/abc123",
+				Source: "https://feishu.cn/wiki/abc123",
 			},
 			wantBody:    "# 正文标题\n\n这是正文内容。\n",
 			wantErr:     false,

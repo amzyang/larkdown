@@ -32,5 +32,5 @@ JSON 配置示例：
 }
 ```
 <!--
-source: https://example.feishu.cn/wiki/H4lKw1uLLise7DkzNWdcmlKSnrs
+source: https://feishu.cn/wiki/H4lKw1uLLise7DkzNWdcmlKSnrs
 -->

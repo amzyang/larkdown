@@ -294,5 +294,5 @@ CLI --> 用户: 下载完成
 
 以上内容覆盖了常见的 Markdown 元素，用于验证 upload 命令的转换正确性。
 <!--
-source: https://example.feishu.cn/wiki/Ryl2wUerhi0xBxkdeNIclN9Rneh
+source: https://feishu.cn/wiki/Ryl2wUerhi0xBxkdeNIclN9Rneh
 -->

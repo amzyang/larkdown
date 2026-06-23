@@ -22,5 +22,5 @@ CLI --> 用户: 下载完成
 @enduml
 ```
 <!--
-source: https://example.feishu.cn/wiki/CsGSw66QcixQJIk1vc3cYECLnQd
+source: https://feishu.cn/wiki/CsGSw66QcixQJIk1vc3cYECLnQd
 -->

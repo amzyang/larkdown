@@ -244,7 +244,7 @@ func TestGenerateFrontMatter(t *testing.T) {
 
 	t.Run("正常 frontmatter", func(t *testing.T) {
 		fm := FrontMatter{
-			Source: "https://example.feishu.cn/docx/abc123",
+			Source: "https://feishu.cn/docx/abc123",
 		}
 		result := GenerateFrontMatter(fm)
 		if !strings.HasPrefix(result, "<!--\n") {
@@ -253,7 +253,7 @@ func TestGenerateFrontMatter(t *testing.T) {
 		if !strings.HasSuffix(result, "-->\n") {
 			t.Errorf("应以 -->\\n 结尾，实际: %q", result)
 		}
-		if !strings.Contains(result, "source: https://example.feishu.cn/docx/abc123\n") {
+		if !strings.Contains(result, "source: https://feishu.cn/docx/abc123\n") {
 			t.Errorf("应包含 source 字段，实际: %s", result)
 		}
 	})
@@ -290,10 +290,10 @@ func TestExtractTokenFromURL(t *testing.T) {
 		url      string
 		expected string
 	}{
-		{"https://example.feishu.cn/wiki/NodeToken123", "NodeToken123"},
-		{"https://example.feishu.cn/docx/DocToken456", "DocToken456"},
-		{"https://example.feishu.cn/docs/OldToken789", "OldToken789"},
-		{"https://example.feishu.cn/drive/folder/abc", ""},
+		{"https://feishu.cn/wiki/NodeToken123", "NodeToken123"},
+		{"https://feishu.cn/docx/DocToken456", "DocToken456"},
+		{"https://feishu.cn/docs/OldToken789", "OldToken789"},
+		{"https://feishu.cn/drive/folder/abc", ""},
 		{"not a url", ""},
 		{"", ""},
 	}
@@ -309,7 +309,7 @@ func TestExtractTokenFromURL(t *testing.T) {
 func TestFindStaleFile(t *testing.T) {
 	t.Run("frontmatter source URL 匹配", func(t *testing.T) {
 		dir := t.TempDir()
-		content := "# 旧文档\n\n内容\n\n<!--\nsource: https://example.feishu.cn/wiki/NodeToken789\n-->\n"
+		content := "# 旧文档\n\n内容\n\n<!--\nsource: https://feishu.cn/wiki/NodeToken789\n-->\n"
 		oldFile := filepath.Join(dir, "旧标题.md")
 		os.WriteFile(oldFile, []byte(content), 0o644)
 

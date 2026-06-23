@@ -99,7 +99,7 @@ func TestExportSheetAsMarkdown(t *testing.T) {
 	defer c.larkClient.Mock().UnMockDriveGetSheet()
 
 	tmpDir := t.TempDir()
-	const sourceURL = "https://example.feishu.cn/wiki/TestNodeToken"
+	const sourceURL = "https://feishu.cn/wiki/TestNodeToken"
 	path, err := c.ExportSheetAsMarkdown(context.Background(), spreadToken, tmpDir, "TestSheet", sourceURL)
 	require.NoError(t, err)
 	assert.True(t, strings.HasSuffix(path, "TestSheet.xlsx.md"), "文件名应以 .xlsx.md 结尾，path=%s", path)

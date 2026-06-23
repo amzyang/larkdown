@@ -24,5 +24,5 @@
 
 </details>
 <!--
-source: https://example.feishu.cn/wiki/QWd7wGlCsilpudkndQScmd8knzh
+source: https://feishu.cn/wiki/QWd7wGlCsilpudkndQScmd8knzh
 -->

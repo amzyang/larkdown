@@ -24,7 +24,7 @@ type Parser struct {
 	ctx         context.Context   // from 0182
 	outputDir   string            // from 0182
 	documentID  string            // 文档 ID
-	prefixURL   string            // 域名前缀（如 https://example.feishu.cn）
+	prefixURL   string            // 域名前缀（如 https://feishu.cn）
 	objEditTime string            // Wiki 节点编辑时间（用于白板缓存）
 	userNames   map[string]string // MentionUser OpenID → 显示名
 }
