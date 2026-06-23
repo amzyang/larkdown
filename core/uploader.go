@@ -22,6 +22,10 @@ type Uploader struct {
 	// mentionUserNames 当前上传文档的 @人 user-id → 显示名映射，
 	// 用于写入失败时把 mention 降级为纯文本。每次 writeContent/incrementalUpdate 前设置。
 	mentionUserNames map[string]string
+	// pendingBoardMappings 累积本次上传新建画板的「PlantUML 源 hash → token」映射，
+	// 由 fillBoards 填充，在 incrementalUpdate/fullUpdate 末尾写入 board manifest 边车
+	// （board_manifest.go），供后续上传跳过未变画板。每次 upload 命令新建 Uploader，无需重置。
+	pendingBoardMappings []BoardMapping
 }
 
 // NewUploader 创建上传器
@@ -209,6 +213,8 @@ func (u *Uploader) fullUpdate(ctx context.Context, documentID, filePath, body st
 			return fmt.Errorf("转换 Markdown 失败: %w", err)
 		}
 		resolveEntityTokens(localResult, remoteEntityTokens(rootBlocks, blockMap))
+		// 复用未变 plantuml 画板的历史 token，使其计入 referencedTokens 而被保留、不重建
+		u.applyBoardTokenMappings(localResult, documentID, filePath, rootBlocks)
 		referencedTokens = localEntityTokenSet(localResult)
 	}
 
@@ -230,6 +236,7 @@ func (u *Uploader) fullUpdate(ctx context.Context, documentID, filePath, body st
 		u.replacePreservedEntities(ctx, documentID, filePath, rootBlocks, blockMap, localResult)
 		// best-effort 校正被保留实体位置（失败回退：实体已保留，仅位置可能不对齐）
 		u.reconcileEntityPositions(ctx, documentID, localResult)
+		u.persistBoardMappings(documentID, filePath)
 	}
 
 	return nil
@@ -375,6 +382,8 @@ func (u *Uploader) incrementalUpdate(ctx context.Context, documentID, filePath, 
 	}
 	u.mentionUserNames = localResult.MentionUserNames
 	resolveEntityTokens(localResult, remoteEntityTokens(rootBlocks, blockMap))
+	// 对无 token 的本地 plantuml 画板，按源 hash 复用历史 token（源未变则跳过重建）
+	u.applyBoardTokenMappings(localResult, documentID, filePath, rootBlocks)
 
 	// 3. 快速路径：远程为空 → 直接全量写入
 	if len(rootBlocks) == 0 {
@@ -383,7 +392,10 @@ func (u *Uploader) incrementalUpdate(ctx context.Context, documentID, filePath, 
 			return nil
 		}
 		if strings.TrimSpace(bodyWithoutTitle) != "" {
-			return u.writeContent(ctx, documentID, filePath, bodyWithoutTitle)
+			if err := u.writeContent(ctx, documentID, filePath, bodyWithoutTitle); err != nil {
+				return err
+			}
+			u.persistBoardMappings(documentID, filePath)
 		}
 		return nil
 	}
@@ -419,6 +431,12 @@ func (u *Uploader) incrementalUpdate(ctx context.Context, documentID, filePath, 
 	var batchRequests []*lark.BatchUpdateDocxDocumentBlockReqRequest
 	var imageReplaces []imageReplaceTask
 	var fileReplaces []fileReplaceTask
+	var docsAIReplaces []docsAIReplaceTask
+	// docs_ai 替换失败（内容无法生成 / BlockReplace 出错）时块会保留原内容（位置不变），
+	// 但本地 markdown 期望新形态——累计失败数，待全部写操作完成后以错误收尾，提示用户重跑（幂等重试）。
+	docsAIFailures := 0
+	// docs_ai block_replace 需 user_access_token；无则该档禁用、跨类型/容器块回退删除重建
+	docsAIEnabled := u.client.HasUserToken()
 
 	// 6. Equal 实体对的内容变更检测：签名只按 token 对齐、不含内容，故 Equal（同 token）
 	// 不代表内容未变。对比本地与缓存 md5，内容已变 → 原地 replace（保块 id、复用位置）。
@@ -453,28 +471,41 @@ func (u *Uploader) incrementalUpdate(ctx context.Context, documentID, filePath, 
 	fmt.Printf("检测到 %d 个变更区域\n", len(regions))
 
 	for _, region := range regions {
-		pairedOps := PairBlocks(region, rootBlocks, localResult)
+		pairedOps := PairBlocks(region, rootBlocks, localResult, docsAIEnabled)
 		for _, op := range pairedOps {
-			if op.Type != PairedOpReplace {
-				continue
-			}
 			remoteBlock := rootBlocks[op.RemoteIdx]
-			localBlock := localResult.TopBlocks[op.LocalIdx]
-
-			req, imgTask, fileTask := u.buildUpdateRequest(remoteBlock, localBlock, op.LocalIdx, localResult)
-			if imgTask != nil {
-				imageReplaces = append(imageReplaces, *imgTask)
-			} else if fileTask != nil {
-				fileReplaces = append(fileReplaces, *fileTask)
-			} else if req != nil {
-				batchRequests = append(batchRequests, req)
+			switch op.Type {
+			case PairedOpReplace:
+				localBlock := localResult.TopBlocks[op.LocalIdx]
+				req, imgTask, fileTask := u.buildUpdateRequest(remoteBlock, localBlock, op.LocalIdx, localResult)
+				if imgTask != nil {
+					imageReplaces = append(imageReplaces, *imgTask)
+				} else if fileTask != nil {
+					fileReplaces = append(fileReplaces, *fileTask)
+				} else if req != nil {
+					batchRequests = append(batchRequests, req)
+				}
+			case PairedOpDocsAIReplace:
+				localBlock := localResult.TopBlocks[op.LocalIdx]
+				if content, ok := u.localBlockMarkdownContent(localBlock); ok {
+					docsAIReplaces = append(docsAIReplaces, docsAIReplaceTask{
+						blockID:    remoteBlock.BlockID,
+						content:    content,
+						remoteType: remoteBlock.BlockType,
+						localType:  localBlock.BlockType,
+					})
+				} else {
+					fmt.Printf("警告: 无法生成 docs_ai 替换内容 (block=%s, type=%d)，跳过\n",
+						remoteBlock.BlockID, localBlock.BlockType)
+					docsAIFailures++
+				}
 			}
 		}
 	}
 
 	// dryrun: 输出报告并返回，不执行任何写操作
 	if dryRun {
-		printDryRunReport(ops, regions, rootBlocks, localResult, batchRequests, imageReplaces, fileReplaces, verbose)
+		printDryRunReport(ops, regions, rootBlocks, localResult, batchRequests, imageReplaces, fileReplaces, docsAIReplaces, docsAIEnabled, verbose)
 		return nil
 	}
 
@@ -487,6 +518,21 @@ func (u *Uploader) incrementalUpdate(ctx context.Context, documentID, filePath, 
 	}
 	if len(batchRequests) > 0 {
 		fmt.Printf("已批量更新 %d 个块\n", len(batchRequests))
+	}
+
+	// docs_ai block_replace 原地替换（跨类型/容器块）。在删除+插入之前执行：整块替换不改根块数量、
+	// 无索引漂移，且这些 op 已被 PairBlocks 消费、不会再进 executeDeleteInsert。
+	docsAIDone := 0
+	for _, t := range docsAIReplaces {
+		if err := u.client.BlockReplace(ctx, documentID, t.blockID, t.content, "markdown"); err != nil {
+			fmt.Printf("警告: docs_ai 替换失败 (block=%s): %v，保留原块\n", t.blockID, err)
+			docsAIFailures++
+			continue
+		}
+		docsAIDone++
+	}
+	if docsAIDone > 0 {
+		fmt.Printf("已原地替换 %d 个块 (docs_ai block_replace)\n", docsAIDone)
 	}
 
 	// 上传图片/文件素材并 batch_update replace_image/replace_file
@@ -504,6 +550,14 @@ func (u *Uploader) incrementalUpdate(ctx context.Context, documentID, filePath, 
 	// 9. best-effort 校正 round-trip 实体位置（白板/图片/文件被重排时移到 markdown 指定位置）
 	u.reconcileEntityPositions(ctx, documentID, localResult)
 
+	// 10. 写回本次新建画板的「源 hash → token」映射边车（供后续上传跳过未变画板）
+	u.persistBoardMappings(documentID, filePath)
+
+	// docs_ai 原地替换有失败：文档已尽力更新（仅这些块保留旧形态），以错误收尾让用户重跑。
+	if docsAIFailures > 0 {
+		return fmt.Errorf("%d 个块的 docs_ai 原地替换失败，文档已部分更新，请重新运行 upload 重试", docsAIFailures)
+	}
+
 	return nil
 }
 
@@ -516,6 +570,8 @@ func printDryRunReport(
 	batchRequests []*lark.BatchUpdateDocxDocumentBlockReqRequest,
 	imageReplaces []imageReplaceTask,
 	fileReplaces []fileReplaceTask,
+	docsAIReplaces []docsAIReplaceTask,
+	docsAIEnabled bool,
 	verbose bool,
 ) {
 	// 统计未变化块数
@@ -535,16 +591,16 @@ func printDryRunReport(
 	fmt.Printf("变更区域: %d\n", len(regions))
 
 	if verbose {
-		printDryRunVerbose(ops, regions, rootBlocks, localResult)
+		printDryRunVerbose(ops, regions, rootBlocks, localResult, docsAIEnabled)
 	} else {
-		printDryRunRegions(regions, rootBlocks, localResult)
+		printDryRunRegions(regions, rootBlocks, localResult, docsAIEnabled)
 	}
 
 	// Summary
-	var totalReplace, totalDelete, totalInsert int
+	var totalReplace, totalDelete, totalInsert, totalDocsAI int
 	var textUpdates, imageUpdates, fileUpdates int
 	for _, region := range regions {
-		for _, op := range PairBlocks(region, rootBlocks, localResult) {
+		for _, op := range PairBlocks(region, rootBlocks, localResult, docsAIEnabled) {
 			switch op.Type {
 			case PairedOpReplace:
 				totalReplace++
@@ -557,6 +613,8 @@ func printDryRunReport(
 				default:
 					textUpdates++
 				}
+			case PairedOpDocsAIReplace:
+				totalDocsAI++
 			case PairedOpDelete:
 				totalDelete++
 			case PairedOpInsert:
@@ -567,23 +625,24 @@ func printDryRunReport(
 
 	fmt.Println("\n=== Summary ===")
 	fmt.Printf("Replace: %d (text: %d, image: %d, file: %d)\n", totalReplace, textUpdates, imageUpdates, fileUpdates)
+	fmt.Printf("DocsAI-Replace: %d\n", totalDocsAI)
 	fmt.Printf("Delete:  %d\n", totalDelete)
 	fmt.Printf("Insert:  %d\n", totalInsert)
 	fmt.Printf("Unchanged: %d\n", unchanged)
 }
 
 // printDryRunRegions 按变更区域输出（默认模式）
-func printDryRunRegions(regions []ChangeRegion, rootBlocks []*lark.DocxBlock, localResult *ConvertResult) {
+func printDryRunRegions(regions []ChangeRegion, rootBlocks []*lark.DocxBlock, localResult *ConvertResult, docsAIEnabled bool) {
 	for i, region := range regions {
 		fmt.Printf("\n--- 区域 %d (远程位置: %d) ---\n", i+1, region.RemoteStartIndex)
-		for _, op := range PairBlocks(region, rootBlocks, localResult) {
+		for _, op := range PairBlocks(region, rootBlocks, localResult, docsAIEnabled) {
 			printPairedOp(op, rootBlocks, localResult)
 		}
 	}
 }
 
 // printDryRunVerbose 按文档顺序输出所有块（verbose 模式）
-func printDryRunVerbose(ops []DiffOp, regions []ChangeRegion, rootBlocks []*lark.DocxBlock, localResult *ConvertResult) {
+func printDryRunVerbose(ops []DiffOp, regions []ChangeRegion, rootBlocks []*lark.DocxBlock, localResult *ConvertResult, docsAIEnabled bool) {
 	// 构建 remoteIdx → region 的查找表
 	type regionEntry struct {
 		regionIdx int
@@ -592,11 +651,11 @@ func printDryRunVerbose(ops []DiffOp, regions []ChangeRegion, rootBlocks []*lark
 	remoteToRegion := make(map[int]*regionEntry)
 	localToRegion := make(map[int]*regionEntry)
 	for i, region := range regions {
-		paired := PairBlocks(region, rootBlocks, localResult)
+		paired := PairBlocks(region, rootBlocks, localResult, docsAIEnabled)
 		entry := &regionEntry{regionIdx: i, pairedOps: paired}
 		for _, op := range paired {
 			switch op.Type {
-			case PairedOpReplace, PairedOpDelete:
+			case PairedOpReplace, PairedOpDocsAIReplace, PairedOpDelete:
 				remoteToRegion[op.RemoteIdx] = entry
 			case PairedOpInsert:
 				localToRegion[op.LocalIdx] = entry
@@ -665,6 +724,18 @@ func printPairedOp(op PairedOp, rootBlocks []*lark.DocxBlock, localResult *Conve
 			}
 		}
 
+	case PairedOpDocsAIReplace:
+		remote := rootBlocks[op.RemoteIdx]
+		local := localResult.TopBlocks[op.LocalIdx]
+		fmt.Printf("  DOCSAI-REPLACE [%d] %s → %s  block_id=%s\n",
+			op.RemoteIdx, blockTypeName(remote.BlockType), blockTypeName(local.BlockType), remote.BlockID)
+		if preview := blockTextPreview(remote, 60); preview != "" {
+			fmt.Printf("    remote: %q\n", preview)
+		}
+		if preview := blockTextPreview(local, 60); preview != "" {
+			fmt.Printf("    local : %q\n", preview)
+		}
+
 	case PairedOpDelete:
 		remote := rootBlocks[op.RemoteIdx]
 		fmt.Printf("  DELETE   [%d] %s  block_id=%s\n",
@@ -719,6 +790,71 @@ type imageReplaceTask struct {
 type fileReplaceTask struct {
 	blockID  string
 	filePath string
+}
+
+// docsAIReplaceTask docs_ai block_replace 任务：用 content（markdown）整块替换 blockID 对应的块。
+type docsAIReplaceTask struct {
+	blockID    string
+	content    string
+	remoteType lark.DocxBlockType
+	localType  lark.DocxBlockType
+}
+
+// headingLevelOf 返回 Heading1..9 的级别（1..9）；非标题返回 0。
+func headingLevelOf(bt lark.DocxBlockType) int {
+	switch bt {
+	case lark.DocxBlockTypeHeading1:
+		return 1
+	case lark.DocxBlockTypeHeading2:
+		return 2
+	case lark.DocxBlockTypeHeading3:
+		return 3
+	case lark.DocxBlockTypeHeading4:
+		return 4
+	case lark.DocxBlockTypeHeading5:
+		return 5
+	case lark.DocxBlockTypeHeading6:
+		return 6
+	case lark.DocxBlockTypeHeading7:
+		return 7
+	case lark.DocxBlockTypeHeading8:
+		return 8
+	case lark.DocxBlockTypeHeading9:
+		return 9
+	}
+	return 0
+}
+
+// localBlockMarkdownContent 把本地 text-like 块渲染为单块 markdown，用作 docs_ai block_replace 的
+// content。仅支持 text/heading/bullet/ordered/quote/todo；其他类型返回 ok=false（回退删除重建）。
+// 复用 parser 的行内渲染，保留 bold/italic/link/inline-code 等样式。
+func (u *Uploader) localBlockMarkdownContent(block *lark.DocxBlock) (string, bool) {
+	text := getBlockText(block)
+	if text == nil {
+		return "", false
+	}
+	p := NewParser(OutputConfig{}, u.client)
+	p.SetUserNames(u.mentionUserNames)
+	inline := strings.TrimRight(p.ParseDocxBlockText(text), "\n")
+
+	switch {
+	case block.BlockType == lark.DocxBlockTypeText:
+		return inline, true
+	case headingLevelOf(block.BlockType) > 0:
+		return strings.Repeat("#", headingLevelOf(block.BlockType)) + " " + inline, true
+	case block.BlockType == lark.DocxBlockTypeBullet:
+		return "- " + inline, true
+	case block.BlockType == lark.DocxBlockTypeOrdered:
+		return "1. " + inline, true
+	case block.BlockType == lark.DocxBlockTypeQuote:
+		return "> " + inline, true
+	case block.BlockType == lark.DocxBlockTypeTodo:
+		if text.Style != nil && text.Style.Done {
+			return "- [x] " + inline, true
+		}
+		return "- [ ] " + inline, true
+	}
+	return "", false
 }
 
 // buildUpdateRequest 为单个 replace 操作构建 batch_update 请求
@@ -945,7 +1081,9 @@ func (u *Uploader) executeDeleteInsert(
 	blockMap map[string]*lark.DocxBlock,
 	localResult *ConvertResult,
 ) error {
-	pairedOps := PairBlocks(region, rootBlocks, localResult)
+	// 必须与 incrementalUpdate 用相同 docsAIEnabled：否则 PairedOpDocsAIReplace 会在此被误判为
+	// delete+insert，造成对已 docs_ai 替换的块重复删除/插入。
+	pairedOps := PairBlocks(region, rootBlocks, localResult, u.client.HasUserToken())
 
 	deleteBlockIDs := collectDeletions(pairedOps, rootBlocks, blockMap, localEntityTokenSet(localResult))
 	var insertLocalIndices []int
@@ -965,9 +1103,12 @@ func (u *Uploader) executeDeleteInsert(
 
 	// 执行插入
 	if len(insertLocalIndices) > 0 {
+		// 统计原地保留块数：batch_update PATCH（PairedOpReplace）与 docs_ai 整块替换
+		// （PairedOpDocsAIReplace）都把块留在区域起点（docs_ai 失败时保留原块，槽位同样占用），
+		// 新块须插在它们之后，故两者都计入。
 		replaceCount := 0
 		for _, op := range pairedOps {
-			if op.Type == PairedOpReplace {
+			if op.Type == PairedOpReplace || op.Type == PairedOpDocsAIReplace {
 				replaceCount++
 			}
 		}
@@ -1500,6 +1641,41 @@ func (u *Uploader) fillBoards(ctx context.Context, result *ConvertResult, insert
 		}
 
 		fmt.Printf("已填充 PlantUML 画板: %s\n", boardToken)
+		// 记录「源 hash → token」映射，供末尾写入 board manifest 边车（源未变时下次跳过重建）
+		u.pendingBoardMappings = append(u.pendingBoardMappings, BoardMapping{
+			SourceHash: canonicalBoardSourceHash(result.BoardCodes[i]),
+			Token:      boardToken,
+		})
+	}
+}
+
+// applyBoardTokenMappings 读 board manifest 边车，对无 token 的本地 plantuml board 写回历史 token
+// （仅当 token 仍存在于远程）。命中后该 board 签名与远程 Equal，增量更新跳过重建。
+func (u *Uploader) applyBoardTokenMappings(localResult *ConvertResult, documentID, mdFile string, rootBlocks []*lark.DocxBlock) {
+	manifest, err := ReadBoardManifest(mdFile)
+	if err != nil || manifest == nil {
+		return
+	}
+	if n := applyBoardMappings(localResult, documentID, manifest, remoteBoardTokens(rootBlocks)); n > 0 {
+		fmt.Printf("复用 %d 个已有画板（PlantUML 源未变）\n", n)
+	}
+}
+
+// persistBoardMappings 把本次新建画板累积的映射 upsert 进 board manifest 边车并落盘。
+// 无新建画板时不写文件，避免无谓改动版本库。
+func (u *Uploader) persistBoardMappings(documentID, mdFile string) {
+	if len(u.pendingBoardMappings) == 0 {
+		return
+	}
+	manifest, err := ReadBoardManifest(mdFile)
+	if err != nil || manifest == nil {
+		manifest = &BoardManifest{}
+	}
+	for _, m := range u.pendingBoardMappings {
+		manifest.upsert(documentID, m.SourceHash, m.Token)
+	}
+	if err := WriteBoardManifest(mdFile, manifest); err != nil {
+		fmt.Printf("警告: 写入画板映射边车失败: %v\n", err)
 	}
 }
 

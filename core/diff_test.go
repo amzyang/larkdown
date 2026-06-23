@@ -269,7 +269,7 @@ func TestPairBlocks_SameType(t *testing.T) {
 		InsertIndices: []int{0},
 	}
 
-	ops := PairBlocks(region, remoteBlocks, localResult)
+	ops := PairBlocks(region, remoteBlocks, localResult, false)
 	assert.Len(t, ops, 1)
 	assert.Equal(t, PairedOpReplace, ops[0].Type)
 }
@@ -288,7 +288,7 @@ func TestPairBlocks_DifferentType(t *testing.T) {
 		InsertIndices: []int{0},
 	}
 
-	ops := PairBlocks(region, remoteBlocks, localResult)
+	ops := PairBlocks(region, remoteBlocks, localResult, false)
 	assert.Len(t, ops, 2)
 	assert.Equal(t, PairedOpDelete, ops[0].Type)
 	assert.Equal(t, PairedOpInsert, ops[1].Type)
@@ -309,7 +309,7 @@ func TestPairBlocks_DescendantNotPaired(t *testing.T) {
 		InsertIndices: []int{0},
 	}
 
-	ops := PairBlocks(region, remoteBlocks, localResult)
+	ops := PairBlocks(region, remoteBlocks, localResult, false)
 	assert.Len(t, ops, 2)
 	assert.Equal(t, PairedOpDelete, ops[0].Type)
 	assert.Equal(t, PairedOpInsert, ops[1].Type)
@@ -329,9 +329,60 @@ func TestPairBlocks_ImagePaired(t *testing.T) {
 		InsertIndices: []int{0},
 	}
 
-	ops := PairBlocks(region, remoteBlocks, localResult)
+	ops := PairBlocks(region, remoteBlocks, localResult, false)
 	assert.Len(t, ops, 1)
 	assert.Equal(t, PairedOpReplace, ops[0].Type)
+}
+
+func TestCanDocsAIReplace(t *testing.T) {
+	text := &lark.DocxBlock{BlockType: lark.DocxBlockTypeText, Text: &lark.DocxBlockText{}}
+	h2 := &lark.DocxBlock{BlockType: lark.DocxBlockTypeHeading2, Heading2: &lark.DocxBlockText{}}
+	bullet := &lark.DocxBlock{BlockType: lark.DocxBlockTypeBullet, Bullet: &lark.DocxBlockText{}}
+	ordered := &lark.DocxBlock{BlockType: lark.DocxBlockTypeOrdered, Ordered: &lark.DocxBlockText{}}
+	board := &lark.DocxBlock{BlockType: lark.DocxBlockTypeBoard, Board: &lark.DocxBlockBoard{Token: "t"}}
+	addons := &lark.DocxBlock{BlockType: lark.DocxBlockTypeAddOns, AddOns: &lark.DocxBlockAddOns{}}
+	img := &lark.DocxBlock{BlockType: lark.DocxBlockTypeImage, Image: &lark.DocxBlockImage{Token: "i"}}
+	table := &lark.DocxBlock{BlockType: lark.DocxBlockTypeTable, Table: &lark.DocxBlockTable{}}
+	r := &ConvertResult{}
+
+	// 跨类型 text-like + enabled → true
+	assert.True(t, canDocsAIReplace(text, h2, 0, r, true))
+	assert.True(t, canDocsAIReplace(bullet, ordered, 0, r, true))
+
+	// disabled → false
+	assert.False(t, canDocsAIReplace(text, h2, 0, r, false))
+	// 同类型（canReplace 优先）→ false
+	assert.False(t, canDocsAIReplace(text, text, 0, r, true))
+	// 画板 / AddOns / 媒体 → false
+	assert.False(t, canDocsAIReplace(text, board, 0, r, true))
+	assert.False(t, canDocsAIReplace(text, addons, 0, r, true))
+	assert.False(t, canDocsAIReplace(text, img, 0, r, true))
+	assert.False(t, canDocsAIReplace(board, text, 0, r, true))
+	// 容器块（remote 为 descendant）→ false
+	assert.False(t, canDocsAIReplace(table, text, 0, r, true))
+}
+
+func TestPairBlocks_DocsAIReplace(t *testing.T) {
+	remoteBlocks := []*lark.DocxBlock{
+		{BlockType: lark.DocxBlockTypeText, Text: &lark.DocxBlockText{}},
+	}
+	localResult := &ConvertResult{
+		TopBlocks: []*lark.DocxBlock{
+			{BlockType: lark.DocxBlockTypeHeading2, Heading2: &lark.DocxBlockText{}},
+		},
+	}
+	region := ChangeRegion{DeleteIndices: []int{0}, InsertIndices: []int{0}}
+
+	// enabled：跨类型 text→heading2 配成 docs_ai 替换（一对消费）
+	ops := PairBlocks(region, remoteBlocks, localResult, true)
+	assert.Len(t, ops, 1)
+	assert.Equal(t, PairedOpDocsAIReplace, ops[0].Type)
+
+	// disabled：回退 delete+insert
+	ops = PairBlocks(region, remoteBlocks, localResult, false)
+	assert.Len(t, ops, 2)
+	assert.Equal(t, PairedOpDelete, ops[0].Type)
+	assert.Equal(t, PairedOpInsert, ops[1].Type)
 }
 
 func TestSignatureFromBlock_Board(t *testing.T) {

@@ -154,6 +154,46 @@ func (c *Client) BlockMoveAfter(ctx context.Context, documentToken, anchorBlockI
 	return err
 }
 
+// docsAIReplaceReq 是 docs_ai/v1 block_replace 的请求体。独立于 docsAIUpdateReq：
+// 后者字段无 omitempty，若复用会多发空 content 字段、可能触发 block_move_after 校验异常。
+type docsAIReplaceReq struct {
+	Format     string `json:"format"`
+	Command    string `json:"command"`
+	RevisionID int64  `json:"revision_id"`
+	BlockID    string `json:"block_id"`
+	Content    string `json:"content"`
+}
+
+// BlockReplace 用 docs_ai/v1 block_replace 整块原地替换 blockID 对应的块（支持跨类型、容器块子树）。
+// content 为 markdown（format="markdown"，默认）或 XML。走 PUT /open-apis/docs_ai/v1/documents/{token}，
+// 与 BlockMoveAfter 同源（SDK 无封装，用 RawRequest）。
+//
+// 注意：替换后旧 blockID 不保证继续可用，调用方不应在同次操作内再以它做锚点/引用；docs_ai 默认需
+// user_access_token（tenant token 可能受限，故调用方应在无 user token 时回退删除重建，见 canDocsAIReplace）。
+func (c *Client) BlockReplace(ctx context.Context, documentToken, blockID, content, format string) error {
+	if format == "" {
+		format = "markdown"
+	}
+	resp := new(docsAIUpdateResp)
+	_, err := c.larkClient.RawRequest(ctx, &lark.RawRequestReq{
+		Scope:  "DocsAI",
+		API:    "BlockReplace",
+		Method: "PUT",
+		URL:    "https://open.feishu.cn/open-apis/docs_ai/v1/documents/" + documentToken,
+		Body: &docsAIReplaceReq{
+			Format:     format,
+			Command:    "block_replace",
+			RevisionID: -1,
+			BlockID:    blockID,
+			Content:    content,
+		},
+		NeedUserAccessToken:   c.userAccessToken != "",
+		NeedTenantAccessToken: c.userAccessToken == "",
+		MethodOption:          c.userMethodOption(),
+	}, resp)
+	return err
+}
+
 // isImageContent 检测响应是否包含图片数据。
 // 先检查 HTTP Content-Type，如果是 application/octet-stream 则用 magic bytes 嗅探。
 func isImageContent(ct string, body []byte) bool {

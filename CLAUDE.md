@@ -49,22 +49,31 @@ make clean          # 删除构建产物
 
 ### 增量更新的块更新策略（uploader/diff）
 
-`incrementalUpdate`（`uploader.go`）对变化的块按「能否原地更新」分流，**优先 patch、保留 block_id**（不破坏协作光标 / 评论锚点）：`ComputeDiff`(LCS) → `PairBlocks` 把同一变更区域的 delete+insert 配对为 `PairedOpReplace`（条件见 `canReplace`，`diff.go`）→ `buildUpdateRequest` → `BatchUpdateDocxBlocks`（飞书 `batch_update` PATCH）。
+`incrementalUpdate`（`uploader.go`）对变化的块按「能否原地更新」**三档分流**，**优先保留 block_id**（不破坏协作光标 / 评论锚点）：`ComputeDiff`(LCS) → `PairBlocks` 把同一变更区域的 delete+insert 配对（`diff.go`）→ 按档执行。
 
-**原地 patch（保 block_id）：**
+**第一档 · 原地 patch（保 block_id，`canReplace`=true → `PairedOpReplace`）：** 飞书 `batch_update` PATCH（`buildUpdateRequest` → `BatchUpdateDocxBlocks`）
 
 - text/heading/bullet/ordered/quote → `update_text_elements`
 - code → `update_text`（含语言, Fields=[4]）
 - todo → `update_text`（含完成态 Fields=[2]）/ `update_text_elements`
 - image/file → 先传素材，再 `replace_image` / `replace_file`
 
-**删除 + 重建（`canReplace` 返回 false）：**
+**第二档 · docs_ai block_replace（跨类型 text-like，`canDocsAIReplace`=true → `PairedOpDocsAIReplace`）：** `client.BlockReplace`（docs_ai/v1 `block_replace`，markdown content）
+
+- 跨类型 text-like 互转（text↔heading↔bullet↔ordered↔quote↔todo）原地整块替换，一次 PUT；优于删除重建之处是原子、保留位置
+- block_id 可能变（docs_ai 不保证），但这些块本就走删除重建、block_id 也会变；content 由 `localBlockMarkdownContent` 复用 parser 行内渲染生成
+- 需 user_access_token（`HasUserToken`）；无则该档禁用、回退第三档（`executeDeleteInsert` 必须用相同 `docsAIEnabled` 调 `PairBlocks`，否则重复删插）
+
+**第三档 · 删除 + 重建（前两档都不满足）：**
 
 - 容器块 table / callout / quote_container（descendant 块）→ 整容器重建，子块 id 全变
-- 白板 board（`batch_update` 无 ReplaceBoard 操作）
-- 跨类型变化（如 text→heading2、bullet→ordered，BlockType 不同）
+- 白板 board（`batch_update` 无 ReplaceBoard、board/v1 无删改节点 API）
+- AddOns 插件块（如 mermaid，docs_ai XML 无法表达）
+- 跨「容器↔非容器」、跨「text-like↔非 text-like」等其余类型变化
 
-**限制与改进路径**：当前走的 `batch_update`（docx v1）是 **block 级** patch——只改一个字符也整块 elements 重发（block_id 仍保留），非子串级，且不能改块类型。需要子串级替换 / 跨类型切换 / 容器块细粒度更新时，可用 `docs_ai/v1`（`str_replace` / `block_replace` / `block_insert_after` 等，对齐 lark fork 的 `cli/docs_update_v2.go`）——**已验证可公开使用、可大胆采用**；项目已用其 `block_move_after` 做实体位置校正（`client.go` `BlockMoveAfter` / `reconcileEntityPositions`），内容更新场景尚未引入，可作改进路径。
+**PlantUML 画板免重建（`board_manifest.go`）：** 本地 ` ```plantuml ` 无 token，签名 `board:plantuml:<源hash>` 与远程 `board:<token>` 命名空间隔离、永不匹配，会每次重建。边车文件 `<file>.feishu2md-board.yaml` 持久化「源 hash → board token」映射：上传前 `applyBoardTokenMappings` 按源 hash 查映射写回 `Board.Token`（且校验 token 仍在远程），命中后签名与远程 Equal → 跳过重建；新建画板后 `persistBoardMappings` 刷新映射。源改了则 hash 变、查不到 → 仍重建（board API 无法原地改画板内容，硬限制）。
+
+**改进路径**：`docs_ai/v1` 的 `block_replace` 已用于第二档跨类型 text-like 替换；`block_move_after` 用于实体位置校正（`BlockMoveAfter` / `reconcileEntityPositions`）。**容器块（table/callout/quote_container）走 docs_ai 尚未落地**——docs_ai markdown 模式下 callout 须用 XML（markdown 会被当普通引用块）、table 的合并/列宽/背景色无法用 markdown 表达，需先引入 `DescendantGroup→docs_ai XML` 序列化器才能开放（届时跨类型/容器块可统一走 `block_replace`）。`str_replace`（子串级、保 block_id）对同类型文本块无增量价值（已由 batch_update 覆盖）。
 
 ### 目录结构
 

@@ -40,9 +40,10 @@ type ChangeRegion struct {
 type PairedOpType int
 
 const (
-	PairedOpReplace PairedOpType = iota // 原地更新
-	PairedOpDelete                      // 仅删除
-	PairedOpInsert                      // 仅插入
+	PairedOpReplace       PairedOpType = iota // 原地更新（batch_update PATCH，保 block_id）
+	PairedOpDelete                            // 仅删除
+	PairedOpInsert                            // 仅插入
+	PairedOpDocsAIReplace                     // docs_ai block_replace 原地替换（跨类型 text-like，block_id 可能变）
 )
 
 // PairedOp 配对后的操作
@@ -436,12 +437,12 @@ func SignatureFromLocalEntry(result *ConvertResult, idx int) BlockSignature {
 	return BlockSignature(fmt.Sprintf("local:%d:%d", bt, idx))
 }
 
-// boardCodeHash 取本地第 idx 个 board 块对应的 PlantUML 源码哈希（无 token 白板专用）
+// boardCodeHash 取本地第 idx 个 board 块对应的 PlantUML 源码哈希（无 token 白板专用）。
+// 复用 canonicalBoardSourceHash，与画板映射边车（board_manifest.go）的 key 口径同源。
 func boardCodeHash(result *ConvertResult, idx int) string {
 	for i, bIdx := range result.BoardIndices {
 		if bIdx == idx {
-			sum := sha256.Sum256([]byte(result.BoardCodes[i]))
-			return fmt.Sprintf("%x", sum[:16])
+			return canonicalBoardSourceHash(result.BoardCodes[i])
 		}
 	}
 	// 找不到源码（理论不应发生）：用位置兜底，保证永不误配远程
@@ -532,8 +533,9 @@ func GroupChangeRegions(ops []DiffOp) []ChangeRegion {
 	return regions
 }
 
-// PairBlocks 在 ChangeRegion 内配对 old/new 块
-func PairBlocks(region ChangeRegion, remoteBlocks []*lark.DocxBlock, localResult *ConvertResult) []PairedOp {
+// PairBlocks 在 ChangeRegion 内配对 old/new 块。docsAIEnabled 控制是否启用 docs_ai block_replace
+// 这一中间档（无 user_access_token 时应传 false，回退原删除+重建行为）。
+func PairBlocks(region ChangeRegion, remoteBlocks []*lark.DocxBlock, localResult *ConvertResult, docsAIEnabled bool) []PairedOp {
 	var ops []PairedOp
 
 	delIdx := 0
@@ -546,12 +548,19 @@ func PairBlocks(region ChangeRegion, remoteBlocks []*lark.DocxBlock, localResult
 		remoteBlock := remoteBlocks[remIdx]
 		localBlock := localResult.TopBlocks[locIdx]
 
-		if canReplace(remoteBlock, localBlock, locIdx, localResult) {
+		switch {
+		case canReplace(remoteBlock, localBlock, locIdx, localResult):
+			// 第一档：batch_update PATCH 原地更新，保留 block_id
 			ops = append(ops, PairedOp{Type: PairedOpReplace, RemoteIdx: remIdx, LocalIdx: locIdx})
 			delIdx++
 			insIdx++
-		} else {
-			// 类型不同，先删除
+		case canDocsAIReplace(remoteBlock, localBlock, locIdx, localResult, docsAIEnabled):
+			// 第二档：docs_ai block_replace 整块替换（跨类型/容器块）
+			ops = append(ops, PairedOp{Type: PairedOpDocsAIReplace, RemoteIdx: remIdx, LocalIdx: locIdx})
+			delIdx++
+			insIdx++
+		default:
+			// 第三档：无法原地替换，先删除（insert 留待配下一个 delete 或单独插入）
 			ops = append(ops, PairedOp{Type: PairedOpDelete, RemoteIdx: remIdx})
 			delIdx++
 		}
@@ -705,4 +714,45 @@ func canReplace(remote *lark.DocxBlock, local *lark.DocxBlock, localIdx int, res
 	// Board 永不原地 Replace：同 token 已是 Equal 不会进 region；不同 token 进 region 时
 	// 也只能 delete+insert（飞书 batch_update 无 ReplaceBoard 操作），故落到下方 return false。
 	return false
+}
+
+// isMediaBlock 判断是否图片/文件块。
+func isMediaBlock(bt lark.DocxBlockType) bool {
+	return bt == lark.DocxBlockTypeImage || bt == lark.DocxBlockTypeFile
+}
+
+// canDocsAIReplace 判断变更块能否用 docs_ai block_replace 原地替换。三档分流的中间档：
+// canReplace（batch_update 保 block_id）优先；此函数覆盖 canReplace 处理不了、但 docs_ai 能整块
+// 替换的情况。需 docsAIEnabled（user_access_token 可用），否则回退删除重建。
+//
+// 当前仅放开「跨类型 text-like 互转」（text/heading/bullet/ordered/quote/todo 之间）。排除：
+//   - 画板 / AddOns：docs_ai 无法表达；
+//   - 媒体实体：走保留 / replace_image / replace_file；
+//   - 容器块 table/callout/quote_container：docs_ai markdown 模式下 callout 须用 XML（markdown 会被
+//     当成普通引用块）、table 的合并/列宽/背景色无法用 markdown 表达，故暂走删除重建，待引入
+//     DescendantGroup→XML 序列化后再开放。
+func canDocsAIReplace(remote, local *lark.DocxBlock, localIdx int, result *ConvertResult, docsAIEnabled bool) bool {
+	if !docsAIEnabled || local == nil {
+		return false
+	}
+	if canReplace(remote, local, localIdx, result) {
+		return false // batch_update 优先
+	}
+	// 容器块：docs_ai markdown 表达受限，暂走删除重建（见函数注释）
+	if isDescendantBlock(remote.BlockType) || result.descendantGroupAt(localIdx) != nil {
+		return false
+	}
+	// 画板 / AddOns：docs_ai 无法表达
+	if remote.BlockType == lark.DocxBlockTypeBoard || local.BlockType == lark.DocxBlockTypeBoard {
+		return false
+	}
+	if remote.BlockType == lark.DocxBlockTypeAddOns || local.BlockType == lark.DocxBlockTypeAddOns {
+		return false
+	}
+	// 媒体实体：走保留 / replace_image / replace_file
+	if isRoundTripEntity(local) || isMediaBlock(remote.BlockType) || isMediaBlock(local.BlockType) {
+		return false
+	}
+	// 仅跨类型 text-like（同类型已被 canReplace 拦截走 batch_update）
+	return isTextLikeBlock(remote.BlockType) && isTextLikeBlock(local.BlockType)
 }

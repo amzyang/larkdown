@@ -37,3 +37,6 @@ dist/
 
 # Claude Code planning notes (internal)
 plans/
+
+# E2E 副产物：testdata 画板映射边车（含每次重建会变的真实 token，不入库）
+testdata/*.feishu2md-board.yaml
