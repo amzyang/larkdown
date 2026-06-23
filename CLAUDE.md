@@ -88,6 +88,8 @@ core/          # 核心业务逻辑
 
 utils/         # URL 校验与 token 提取、文件名清理
 
+skills/        # Agent Skill 定义（larkdown skill：SKILL.md + references/）
+
 testdata/      # 测试数据：JSON (DocxBlock) + MD (期望输出) golden file 对比
 ```
 

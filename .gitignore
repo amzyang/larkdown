@@ -14,9 +14,9 @@
 # Dependency directories (remove the comment below to include it)
 # vendor/
 bin/
-larkdown
-feishu2md
-feishu2md4web
+/larkdown
+/feishu2md
+/feishu2md4web
 .env
 ./static
 VERSION
