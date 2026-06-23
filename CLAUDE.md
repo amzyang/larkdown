@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 larkdown 是一个飞书文档与 Markdown 双向转换的 Go CLI 工具。支持下载飞书文档为 Markdown，也支持上传 Markdown 回飞书 Wiki。
 
-> 命名说明：项目原名 `feishu2md`，现已重命名为 **larkdown**（Lark + Markdown）。Go module、二进制、CLI 命令名均为 `larkdown`；但**用户数据路径的字面量刻意保留 `feishu2md`**（`~/.config/feishu2md/`、`~/.cache/feishu2md/`、发布边车文件 `.feishu2md-publish.yaml`），以零迁移兼容老用户的已有配置/缓存/发布记录——改这些字面量会让老数据失联。本地检出目录 `~/Vcs/gaotu/zouyang/feishu2md` 同理未改名。
+> 命名说明：项目原名 `feishu2md`，现已重命名为 **larkdown**（Lark + Markdown）。Go module、二进制、CLI 命令名均为 `larkdown`；但**用户数据路径的字面量刻意保留 `feishu2md`**（`~/.config/feishu2md/`、`~/.cache/feishu2md/`、发布边车文件 `.feishu2md-publish.yaml`），以零迁移兼容老用户的已有配置/缓存/发布记录——改这些字面量会让老数据失联。
 
 ## 常用命令
 
@@ -64,7 +64,7 @@ make clean          # 删除构建产物
 - 白板 board（`batch_update` 无 ReplaceBoard 操作）
 - 跨类型变化（如 text→heading2、bullet→ordered，BlockType 不同）
 
-**限制与改进路径**：当前走的 `batch_update`（docx v1）是 **block 级** patch——只改一个字符也整块 elements 重发（block_id 仍保留），非子串级，且不能改块类型。需要子串级替换 / 跨类型切换 / 容器块细粒度更新时，可用 `docs_ai/v1`（`str_replace` / `block_replace` / `block_insert_after` 等，对齐 `~/Vcs/lark/cli` 的 `docs_update_v2.go`）——**已验证可公开使用、可大胆采用**；项目已用其 `block_move_after` 做实体位置校正（`client.go` `BlockMoveAfter` / `reconcileEntityPositions`），内容更新场景尚未引入，可作改进路径。
+**限制与改进路径**：当前走的 `batch_update`（docx v1）是 **block 级** patch——只改一个字符也整块 elements 重发（block_id 仍保留），非子串级，且不能改块类型。需要子串级替换 / 跨类型切换 / 容器块细粒度更新时，可用 `docs_ai/v1`（`str_replace` / `block_replace` / `block_insert_after` 等，对齐 lark fork 的 `cli/docs_update_v2.go`）——**已验证可公开使用、可大胆采用**；项目已用其 `block_move_after` 做实体位置校正（`client.go` `BlockMoveAfter` / `reconcileEntityPositions`），内容更新场景尚未引入，可作改进路径。
 
 ### 目录结构
 
@@ -98,7 +98,7 @@ testdata/      # 测试数据：JSON (DocxBlock) + MD (期望输出) golden file
 ## 核心依赖
 
 - `github.com/chyroc/lark` - 飞书 API SDK（使用 `github.com/amzyang/lark` fork，通过 `go.mod` replace 指令引用）
-  - Fork 源代码位置：`~/Vcs/lark`，可直接查看实现
+  - Fork 源代码本地检出于 `<lark-fork>`（用下方 GitHub 地址 clone 即可），可直接查看实现
   - Fork GitHub: <https://github.com/amzyang/lark.git>
   - 上游 GitHub: <https://github.com/chyroc/lark.git> （复杂问题可参考 issues, discussions, pull requests）
 - `github.com/yuin/goldmark` - Markdown 解析（用于 md2blocks 反向转换）
@@ -108,15 +108,17 @@ testdata/      # 测试数据：JSON (DocxBlock) + MD (期望输出) golden file
 
 修改 fork 后更新 larkdown 依赖的流程：
 
+> 下文 `<lark-fork>` 指 amzyang/lark fork 的本地检出，`<larkdown>` 指本仓库根目录。
+
 ```bash
 # 1. 在 fork 仓库提交并推送
-cd ~/Vcs/lark
+cd <lark-fork>
 git add <changed-files>
 git commit -m "fix(docx): <description>"
 git push origin master
 
 # 2. 在 larkdown 中更新 replace 指令
-cd ~/Vcs/gaotu/zouyang/feishu2md
+cd <larkdown>
 go mod edit -replace github.com/chyroc/lark=github.com/amzyang/lark@<new-pseudo-version>
 go mod tidy
 
@@ -127,14 +129,14 @@ make build && make test
 其中 `<new-pseudo-version>` 格式为 `v0.0.0-<timestamp>-<commit-hash-12>`，可通过 `go list -m github.com/amzyang/lark@<commit>` 获取，或直接用 commit hash：
 
 ```bash
-go mod edit -replace "github.com/chyroc/lark=github.com/amzyang/lark@$(cd ~/Vcs/lark && git rev-parse HEAD)"
+go mod edit -replace "github.com/chyroc/lark=github.com/amzyang/lark@$(cd <lark-fork> && git rev-parse HEAD)"
 go mod tidy
 ```
 
 同步上游变更到 fork：
 
 ```bash
-cd ~/Vcs/lark
+cd <lark-fork>
 git remote add upstream https://github.com/chyroc/lark.git  # 仅首次
 git fetch upstream
 git merge upstream/master

@@ -2,8 +2,6 @@
 
 飞书文档与 Markdown 双向转换工具，对 AI 友好。支持批量下载飞书文档为 Markdown，也支持上传 Markdown 到飞书 Wiki（含增量更新）。可以以 `cli` 命令行工具形式使用，也可以作为 Agent Skills 集成到 AI Agent 中。
 
-[点此入群](https://applink.feishu.cn/client/chat/chatter/add_by_link?link_token=894l27bb-5fe2-4b6c-8109-8a8a35a45133)
-
 ## 如何安装
 
 ```bash
