@@ -51,7 +51,8 @@ brews:
     homepage: "https://github.com/amzyang/larkdown"
     description: "飞书文档与 Markdown 双向转换 CLI（下载/上传/增量更新）"
     license: "MIT"
-    caveats: "白板图片留白裁剪为可选功能，需额外安装 imagemagick：brew install imagemagick"
+    dependencies:
+      - name: imagemagick
     install: |
       bin.install "larkdown"
       generate_completions_from_executable(bin/"larkdown", "completion")

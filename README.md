@@ -9,6 +9,8 @@ brew tap amzyang/tap
 brew install amzyang/tap/larkdown
 ```
 
+> 白板/画板图片留白裁剪依赖 ImageMagick，已作为强制依赖随 `brew install` 自动安装，无需手动处理。
+
 ### 安装开发版本
 
 > **不建议**：开发中的版本可能有稳定性问题。
@@ -220,7 +222,7 @@ Skill 源码随仓库维护于 [`skills/larkdown/`](skills/larkdown/)（含 `SKI
 
 | 元素类型           | 支持状态    | 输出格式      | 备注                                |
 | ------------------ | ----------- | ------------- | ----------------------------------- |
-| 白板/画板          | ✅ 完全支持 | PNG 图片      | Wiki 文档支持缓存，需要 ImageMagick |
+| 白板/画板          | ✅ 完全支持 | PNG 图片      | Wiki 文档支持缓存，依赖 ImageMagick（已随安装自动配置） |
 | 普通表格           | ✅ 完全支持 | Markdown/HTML | 合并单元格自动转 HTML               |
 | 电子表格 (Sheet)   | ✅ 完全支持 | Markdown/HTML | 需要 `drive:export:readonly` 权限   |
 | 多维表格 (Bitable) | ✅ 完全支持 | Markdown      | 仅支持基础字段类型                  |
