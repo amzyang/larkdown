@@ -1,0 +1,55 @@
+{
+  "document": {
+    "document_id": "ROOTDOC",
+    "title": "Title"
+  },
+  "blocks": [
+    {
+      "block_id": "ROOTDOC",
+      "children": [
+        "co"
+      ],
+      "block_type": 1,
+      "page": {
+        "style": {},
+        "elements": [
+          {
+            "text_run": {
+              "content": "Title",
+              "text_element_style": {}
+            }
+          }
+        ]
+      }
+    },
+    {
+      "block_id": "co",
+      "parent_id": "ROOTDOC",
+      "children": [
+        "cotext"
+      ],
+      "block_type": 19,
+      "callout": {
+        "background_color": 1,
+        "border_color": 1,
+        "emoji_id": "bulb"
+      }
+    },
+    {
+      "block_id": "cotext",
+      "parent_id": "co",
+      "block_type": 2,
+      "text": {
+        "style": {},
+        "elements": [
+          {
+            "text_run": {
+              "content": "This is a callout",
+              "text_element_style": {}
+            }
+          }
+        ]
+      }
+    }
+  ]
+}

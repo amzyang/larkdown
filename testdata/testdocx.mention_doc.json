@@ -1,0 +1,137 @@
+{
+  "document": {
+    "document_id": "doxcnMentionDocTest",
+    "revision_id": 1,
+    "title": "MentionDoc 测试"
+  },
+  "blocks": [
+    {
+      "block_id": "doxcnMentionDocTest",
+      "children": [
+        "blk_text1",
+        "blk_heading1",
+        "blk_bullet1",
+        "blk_text2"
+      ],
+      "block_type": 1,
+      "page": {
+        "elements": [
+          {
+            "text_run": {
+              "content": "MentionDoc 测试"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "block_id": "blk_text1",
+      "parent_id": "doxcnMentionDocTest",
+      "block_type": 2,
+      "text": {
+        "elements": [
+          {
+            "text_run": {
+              "content": "详见 "
+            }
+          },
+          {
+            "mention_doc": {
+              "token": "TokDocx001",
+              "obj_type": 22,
+              "url": "https%3A%2F%2Fx.feishu.cn%2Fdocx%2FTokDocx001",
+              "title": "新版文档"
+            }
+          },
+          {
+            "text_run": {
+              "content": " 和 "
+            }
+          },
+          {
+            "mention_doc": {
+              "token": "TokDoc002",
+              "obj_type": 1,
+              "url": "https%3A%2F%2Fx.feishu.cn%2Fdocs%2FTokDoc002",
+              "title": "旧版文档"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "block_id": "blk_heading1",
+      "parent_id": "doxcnMentionDocTest",
+      "block_type": 3,
+      "heading1": {
+        "elements": [
+          {
+            "text_run": {
+              "content": "数据源："
+            }
+          },
+          {
+            "mention_doc": {
+              "token": "TokSheet003",
+              "obj_type": 3,
+              "url": "https%3A%2F%2Fx.feishu.cn%2Fsheets%2FTokSheet003",
+              "title": "电子表格"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "block_id": "blk_bullet1",
+      "parent_id": "doxcnMentionDocTest",
+      "block_type": 12,
+      "bullet": {
+        "elements": [
+          {
+            "mention_doc": {
+              "token": "TokBitable004",
+              "obj_type": 8,
+              "url": "https%3A%2F%2Fx.feishu.cn%2Fbase%2FTokBitable004",
+              "title": "多维表格"
+            }
+          },
+          {
+            "text_run": {
+              "content": " 与 "
+            }
+          },
+          {
+            "mention_doc": {
+              "token": "TokWiki005",
+              "obj_type": 16,
+              "url": "https%3A%2F%2Fx.feishu.cn%2Fwiki%2FTokWiki005",
+              "title": "知识库节点"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "block_id": "blk_text2",
+      "parent_id": "doxcnMentionDocTest",
+      "block_type": 2,
+      "text": {
+        "elements": [
+          {
+            "text_run": {
+              "content": "思维笔记 "
+            }
+          },
+          {
+            "mention_doc": {
+              "token": "TokMindnote006",
+              "obj_type": 11,
+              "url": "https%3A%2F%2Fx.feishu.cn%2Fmindnotes%2FTokMindnote006",
+              "title": "思维笔记"
+            }
+          }
+        ]
+      }
+    }
+  ]
+}

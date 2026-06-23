@@ -1,0 +1,75 @@
+{
+  "document": {
+    "document_id": "doc_folded",
+    "revision_id": 1,
+    "title": "folded"
+  },
+  "blocks": [
+    {
+      "block_id": "doc_folded",
+      "block_type": 1,
+      "children": ["blk_folded_parent"],
+      "page": {
+        "elements": [
+          {
+            "text_run": {
+              "content": "folded",
+              "text_element_style": {}
+            }
+          }
+        ],
+        "style": { "align": 1 }
+      },
+      "parent_id": ""
+    },
+    {
+      "block_id": "blk_folded_parent",
+      "block_type": 2,
+      "children": ["blk_child_text", "blk_child_code"],
+      "parent_id": "doc_folded",
+      "text": {
+        "elements": [
+          {
+            "text_run": {
+              "content": "details",
+              "text_element_style": {}
+            }
+          }
+        ],
+        "style": { "align": 1, "folded": true }
+      }
+    },
+    {
+      "block_id": "blk_child_text",
+      "block_type": 2,
+      "parent_id": "blk_folded_parent",
+      "text": {
+        "elements": [
+          {
+            "text_run": {
+              "content": "summary",
+              "text_element_style": {}
+            }
+          }
+        ],
+        "style": { "align": 1 }
+      }
+    },
+    {
+      "block_id": "blk_child_code",
+      "block_type": 14,
+      "parent_id": "blk_folded_parent",
+      "code": {
+        "elements": [
+          {
+            "text_run": {
+              "content": "{\"code\": 0}",
+              "text_element_style": {}
+            }
+          }
+        ],
+        "style": { "language": 28, "wrap": true }
+      }
+    }
+  ]
+}

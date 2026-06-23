@@ -1,0 +1,117 @@
+{
+  "document": {
+    "document_id": "QYr6dxFGYoaiRqxW4fAcLkrgnPd",
+    "revision_id": 19,
+    "title": "nested-todos"
+  },
+  "blocks": [
+    {
+      "block_id": "QYr6dxFGYoaiRqxW4fAcLkrgnPd",
+      "block_type": 1,
+      "children": [
+        "doxcnotrFYIcjHQWth6MtJNyzGg",
+        "AXcyd0cwqoVoQmxJL5Ucputwnqg"
+      ],
+      "page": {
+        "elements": [
+          {
+            "text_run": {
+              "content": "nested-todos",
+              "text_element_style": {
+                "bold": false,
+                "inline_code": false,
+                "italic": false,
+                "strikethrough": false,
+                "underline": false
+              }
+            }
+          }
+        ],
+        "style": {
+          "align": 1
+        }
+      },
+      "parent_id": ""
+    },
+    {
+      "block_id": "doxcnotrFYIcjHQWth6MtJNyzGg",
+      "block_type": 17,
+      "children": [
+        "Ax51dJRR9ow4J0xVQz8czTA8nvb"
+      ],
+      "parent_id": "QYr6dxFGYoaiRqxW4fAcLkrgnPd",
+      "todo": {
+        "elements": [
+          {
+            "text_run": {
+              "content": "1",
+              "text_element_style": {
+                "bold": false,
+                "inline_code": false,
+                "italic": false,
+                "strikethrough": false,
+                "underline": false
+              }
+            }
+          }
+        ],
+        "style": {
+          "align": 1,
+          "done": false,
+          "folded": false
+        }
+      }
+    },
+    {
+      "block_id": "Ax51dJRR9ow4J0xVQz8czTA8nvb",
+      "block_type": 17,
+      "parent_id": "doxcnotrFYIcjHQWth6MtJNyzGg",
+      "todo": {
+        "elements": [
+          {
+            "text_run": {
+              "content": "2",
+              "text_element_style": {
+                "bold": false,
+                "inline_code": false,
+                "italic": false,
+                "strikethrough": false,
+                "underline": false
+              }
+            }
+          }
+        ],
+        "style": {
+          "align": 1,
+          "done": false,
+          "folded": false
+        }
+      }
+    },
+    {
+      "block_id": "AXcyd0cwqoVoQmxJL5Ucputwnqg",
+      "block_type": 2,
+      "parent_id": "QYr6dxFGYoaiRqxW4fAcLkrgnPd",
+      "text": {
+        "elements": [
+          {
+            "text_run": {
+              "content": "",
+              "text_element_style": {
+                "bold": false,
+                "inline_code": false,
+                "italic": false,
+                "strikethrough": false,
+                "underline": false
+              }
+            }
+          }
+        ],
+        "style": {
+          "align": 1,
+          "folded": false
+        }
+      }
+    }
+  ]
+}

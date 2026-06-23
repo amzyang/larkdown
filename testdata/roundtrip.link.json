@@ -1,0 +1,58 @@
+{
+  "document": {
+    "document_id": "ROOTDOC",
+    "title": "Title"
+  },
+  "blocks": [
+    {
+      "block_id": "ROOTDOC",
+      "children": [
+        "lt"
+      ],
+      "block_type": 1,
+      "page": {
+        "style": {},
+        "elements": [
+          {
+            "text_run": {
+              "content": "Title",
+              "text_element_style": {}
+            }
+          }
+        ]
+      }
+    },
+    {
+      "block_id": "lt",
+      "parent_id": "ROOTDOC",
+      "block_type": 2,
+      "text": {
+        "style": {},
+        "elements": [
+          {
+            "text_run": {
+              "content": "See ",
+              "text_element_style": {}
+            }
+          },
+          {
+            "text_run": {
+              "content": "this post",
+              "text_element_style": {
+                "link": {
+                  "url": "https%3A%2F%2Fexample.com%2Fpost%2F123"
+                }
+              }
+            }
+          },
+          {
+            "text_run": {
+              "content": " for details",
+              "text_element_style": {}
+            }
+          }
+        ]
+      }
+    }
+  ]
+}

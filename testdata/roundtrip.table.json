@@ -1,0 +1,153 @@
+{
+  "document": {
+    "document_id": "ROOTDOC",
+    "title": "Title"
+  },
+  "blocks": [
+    {
+      "block_id": "ROOTDOC",
+      "children": [
+        "tbl"
+      ],
+      "block_type": 1,
+      "page": {
+        "style": {},
+        "elements": [
+          {
+            "text_run": {
+              "content": "Title",
+              "text_element_style": {}
+            }
+          }
+        ]
+      }
+    },
+    {
+      "block_id": "tbl",
+      "parent_id": "ROOTDOC",
+      "children": [
+        "cellA1",
+        "cellB1",
+        "cellA2",
+        "cellB2"
+      ],
+      "block_type": 31,
+      "table": {
+        "cells": [
+          "cellA1",
+          "cellB1",
+          "cellA2",
+          "cellB2"
+        ],
+        "property": {
+          "row_size": 2,
+          "column_size": 2,
+          "column_width": [
+            100,
+            100
+          ]
+        }
+      }
+    },
+    {
+      "block_id": "cellA1",
+      "parent_id": "tbl",
+      "children": [
+        "ctA1"
+      ],
+      "block_type": 32,
+      "table_cell": {}
+    },
+    {
+      "block_id": "ctA1",
+      "parent_id": "cellA1",
+      "block_type": 2,
+      "text": {
+        "style": {},
+        "elements": [
+          {
+            "text_run": {
+              "content": "A1",
+              "text_element_style": {}
+            }
+          }
+        ]
+      }
+    },
+    {
+      "block_id": "cellB1",
+      "parent_id": "tbl",
+      "children": [
+        "ctB1"
+      ],
+      "block_type": 32,
+      "table_cell": {}
+    },
+    {
+      "block_id": "ctB1",
+      "parent_id": "cellB1",
+      "block_type": 2,
+      "text": {
+        "style": {},
+        "elements": [
+          {
+            "text_run": {
+              "content": "B1",
+              "text_element_style": {}
+            }
+          }
+        ]
+      }
+    },
+    {
+      "block_id": "cellA2",
+      "parent_id": "tbl",
+      "children": [
+        "ctA2"
+      ],
+      "block_type": 32,
+      "table_cell": {}
+    },
+    {
+      "block_id": "ctA2",
+      "parent_id": "cellA2",
+      "block_type": 2,
+      "text": {
+        "style": {},
+        "elements": [
+          {
+            "text_run": {
+              "content": "A2",
+              "text_element_style": {}
+            }
+          }
+        ]
+      }
+    },
+    {
+      "block_id": "cellB2",
+      "parent_id": "tbl",
+      "children": [
+        "ctB2"
+      ],
+      "block_type": 32,
+      "table_cell": {}
+    },
+    {
+      "block_id": "ctB2",
+      "parent_id": "cellB2",
+      "block_type": 2,
+      "text": {
+        "style": {},
+        "elements": [
+          {
+            "text_run": {
+              "content": "B2",
+              "text_element_style": {}
+            }
+          }
+        ]
+      }
+    }
+  ]
+}

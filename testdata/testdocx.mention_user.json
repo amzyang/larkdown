@@ -1,0 +1,94 @@
+{
+  "document": {
+    "document_id": "doxcnMentionUserTest",
+    "revision_id": 1,
+    "title": "MentionUser 测试"
+  },
+  "blocks": [
+    {
+      "block_id": "doxcnMentionUserTest",
+      "children": [
+        "blk_text1",
+        "blk_heading1",
+        "blk_bullet1"
+      ],
+      "block_type": 1,
+      "page": {
+        "elements": [
+          {
+            "text_run": {
+              "content": "MentionUser 测试"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "block_id": "blk_text1",
+      "parent_id": "doxcnMentionUserTest",
+      "block_type": 2,
+      "text": {
+        "elements": [
+          {
+            "text_run": {
+              "content": "请联系 "
+            }
+          },
+          {
+            "mention_user": {
+              "user_id": "on_abc123"
+            }
+          },
+          {
+            "text_run": {
+              "content": " 了解详情"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "block_id": "blk_heading1",
+      "parent_id": "doxcnMentionUserTest",
+      "block_type": 3,
+      "heading1": {
+        "elements": [
+          {
+            "text_run": {
+              "content": "负责人："
+            }
+          },
+          {
+            "mention_user": {
+              "user_id": "on_def456"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "block_id": "blk_bullet1",
+      "parent_id": "doxcnMentionUserTest",
+      "block_type": 12,
+      "bullet": {
+        "elements": [
+          {
+            "mention_user": {
+              "user_id": "on_abc123"
+            }
+          },
+          {
+            "text_run": {
+              "content": " 和 "
+            }
+          },
+          {
+            "mention_user": {
+              "user_id": "on_def456"
+            }
+          }
+        ]
+      }
+    }
+  ]
+}

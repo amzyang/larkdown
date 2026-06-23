@@ -1,0 +1,67 @@
+# yaml-language-server: $schema=https://goreleaser.com/static/schema.json
+version: 2
+project_name: larkdown
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: larkdown
+    main: ./cmd
+    binary: larkdown
+    env:
+      - CGO_ENABLED=0
+    goos: [darwin, linux]
+    goarch: [amd64, arm64]
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+      - -X main.version={{ .Version }}
+
+archives:
+  - id: larkdown
+    ids: [larkdown]
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    formats: [tar.gz]
+    files:
+      - README.md
+      - LICENSE
+
+checksum:
+  name_template: "checksums.txt"
+  algorithm: sha256
+
+changelog:
+  use: github
+  sort: asc
+  filters:
+    exclude: ["^docs:", "^test:", "^chore:", "^ci:", "Merge "]
+
+brews:
+  - name: larkdown
+    ids: [larkdown]
+    repository:
+      owner: amzyang
+      name: homebrew-tap
+      branch: main
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+    directory: Formula
+    homepage: "https://github.com/amzyang/larkdown"
+    description: "飞书文档与 Markdown 双向转换 CLI（下载/上传/增量更新）"
+    license: "MIT"
+    caveats: "白板图片留白裁剪为可选功能，需额外安装 imagemagick：brew install imagemagick"
+    install: |
+      bin.install "larkdown"
+      generate_completions_from_executable(bin/"larkdown", "completion")
+    test: |
+      assert_match version.to_s, shell_output("#{bin}/larkdown --version")
+      system "#{bin}/larkdown", "--help"
+
+release:
+  github:
+    owner: amzyang
+    name: larkdown
+  draft: false
+  prerelease: auto

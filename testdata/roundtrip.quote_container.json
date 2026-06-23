@@ -1,0 +1,68 @@
+{
+  "document": {
+    "document_id": "ROOTDOC",
+    "title": "Title"
+  },
+  "blocks": [
+    {
+      "block_id": "ROOTDOC",
+      "children": [
+        "qc"
+      ],
+      "block_type": 1,
+      "page": {
+        "style": {},
+        "elements": [
+          {
+            "text_run": {
+              "content": "Title",
+              "text_element_style": {}
+            }
+          }
+        ]
+      }
+    },
+    {
+      "block_id": "qc",
+      "parent_id": "ROOTDOC",
+      "children": [
+        "q1",
+        "q2"
+      ],
+      "block_type": 34,
+      "quote_container": {}
+    },
+    {
+      "block_id": "q1",
+      "parent_id": "qc",
+      "block_type": 2,
+      "text": {
+        "style": {},
+        "elements": [
+          {
+            "text_run": {
+              "content": "First quote line",
+              "text_element_style": {}
+            }
+          }
+        ]
+      }
+    },
+    {
+      "block_id": "q2",
+      "parent_id": "qc",
+      "block_type": 2,
+      "text": {
+        "style": {},
+        "elements": [
+          {
+            "text_run": {
+              "content": "Second quote line",
+              "text_element_style": {}
+            }
+          }
+        ]
+      }
+    }
+  ]
+}

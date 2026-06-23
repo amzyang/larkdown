@@ -1,0 +1,62 @@
+{
+  "document": {
+    "document_id": "ROOTDOC",
+    "title": "Title"
+  },
+  "blocks": [
+    {
+      "block_id": "ROOTDOC",
+      "children": [
+        "p",
+        "code"
+      ],
+      "block_type": 1,
+      "page": {
+        "style": {},
+        "elements": [
+          {
+            "text_run": {
+              "content": "Title",
+              "text_element_style": {}
+            }
+          }
+        ]
+      }
+    },
+    {
+      "block_id": "p",
+      "parent_id": "ROOTDOC",
+      "block_type": 2,
+      "text": {
+        "style": {},
+        "elements": [
+          {
+            "text_run": {
+              "content": "Some code:",
+              "text_element_style": {}
+            }
+          }
+        ]
+      }
+    },
+    {
+      "block_id": "code",
+      "parent_id": "ROOTDOC",
+      "block_type": 14,
+      "code": {
+        "style": {
+          "language": 7,
+          "wrap": true
+        },
+        "elements": [
+          {
+            "text_run": {
+              "content": "fmt.Println(\"hi\")",
+              "text_element_style": {}
+            }
+          }
+        ]
+      }
+    }
+  ]
+}

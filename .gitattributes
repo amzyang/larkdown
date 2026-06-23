@@ -1,0 +1,2 @@
+# testdata golden files may have trailing blank lines to match parser output
+testdata/*.md whitespace=-blank-at-eof

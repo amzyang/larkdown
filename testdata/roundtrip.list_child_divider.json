@@ -1,0 +1,51 @@
+{
+  "document": {
+    "document_id": "ROOTDOC",
+    "title": "T"
+  },
+  "blocks": [
+    {
+      "block_id": "ROOTDOC",
+      "children": [
+        "bul"
+      ],
+      "block_type": 1,
+      "page": {
+        "style": {},
+        "elements": [
+          {
+            "text_run": {
+              "content": "T",
+              "text_element_style": {}
+            }
+          }
+        ]
+      }
+    },
+    {
+      "block_id": "bul",
+      "parent_id": "ROOTDOC",
+      "block_type": 12,
+      "bullet": {
+        "style": {},
+        "elements": [
+          {
+            "text_run": {
+              "content": "bar",
+              "text_element_style": {}
+            }
+          }
+        ]
+      },
+      "children": [
+        "div"
+      ]
+    },
+    {
+      "block_id": "div",
+      "parent_id": "bul",
+      "block_type": 22,
+      "divider": {}
+    }
+  ]
+}

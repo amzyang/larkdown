@@ -1,0 +1,234 @@
+{
+  "document": {
+    "document_id": "ROOTDOC",
+    "title": "Title"
+  },
+  "blocks": [
+    {
+      "block_id": "ROOTDOC",
+      "children": [
+        "h1",
+        "p1",
+        "tbl",
+        "co",
+        "bl"
+      ],
+      "block_type": 1,
+      "page": {
+        "style": {},
+        "elements": [
+          {
+            "text_run": {
+              "content": "Title",
+              "text_element_style": {}
+            }
+          }
+        ]
+      }
+    },
+    {
+      "block_id": "h1",
+      "parent_id": "ROOTDOC",
+      "block_type": 3,
+      "heading1": {
+        "style": {},
+        "elements": [
+          {
+            "text_run": {
+              "content": "Section",
+              "text_element_style": {}
+            }
+          }
+        ]
+      }
+    },
+    {
+      "block_id": "p1",
+      "parent_id": "ROOTDOC",
+      "block_type": 2,
+      "text": {
+        "style": {},
+        "elements": [
+          {
+            "text_run": {
+              "content": "A paragraph.",
+              "text_element_style": {}
+            }
+          }
+        ]
+      }
+    },
+    {
+      "block_id": "tbl",
+      "parent_id": "ROOTDOC",
+      "children": [
+        "mcellX1",
+        "mcellY1",
+        "mcellX2",
+        "mcellY2"
+      ],
+      "block_type": 31,
+      "table": {
+        "cells": [
+          "mcellX1",
+          "mcellY1",
+          "mcellX2",
+          "mcellY2"
+        ],
+        "property": {
+          "row_size": 2,
+          "column_size": 2,
+          "column_width": [
+            100,
+            100
+          ]
+        }
+      }
+    },
+    {
+      "block_id": "mcellX1",
+      "parent_id": "tbl",
+      "children": [
+        "mctX1"
+      ],
+      "block_type": 32,
+      "table_cell": {}
+    },
+    {
+      "block_id": "mctX1",
+      "parent_id": "mcellX1",
+      "block_type": 2,
+      "text": {
+        "style": {},
+        "elements": [
+          {
+            "text_run": {
+              "content": "X1",
+              "text_element_style": {}
+            }
+          }
+        ]
+      }
+    },
+    {
+      "block_id": "mcellY1",
+      "parent_id": "tbl",
+      "children": [
+        "mctY1"
+      ],
+      "block_type": 32,
+      "table_cell": {}
+    },
+    {
+      "block_id": "mctY1",
+      "parent_id": "mcellY1",
+      "block_type": 2,
+      "text": {
+        "style": {},
+        "elements": [
+          {
+            "text_run": {
+              "content": "Y1",
+              "text_element_style": {}
+            }
+          }
+        ]
+      }
+    },
+    {
+      "block_id": "mcellX2",
+      "parent_id": "tbl",
+      "children": [
+        "mctX2"
+      ],
+      "block_type": 32,
+      "table_cell": {}
+    },
+    {
+      "block_id": "mctX2",
+      "parent_id": "mcellX2",
+      "block_type": 2,
+      "text": {
+        "style": {},
+        "elements": [
+          {
+            "text_run": {
+              "content": "X2",
+              "text_element_style": {}
+            }
+          }
+        ]
+      }
+    },
+    {
+      "block_id": "mcellY2",
+      "parent_id": "tbl",
+      "children": [
+        "mctY2"
+      ],
+      "block_type": 32,
+      "table_cell": {}
+    },
+    {
+      "block_id": "mctY2",
+      "parent_id": "mcellY2",
+      "block_type": 2,
+      "text": {
+        "style": {},
+        "elements": [
+          {
+            "text_run": {
+              "content": "Y2",
+              "text_element_style": {}
+            }
+          }
+        ]
+      }
+    },
+    {
+      "block_id": "co",
+      "parent_id": "ROOTDOC",
+      "children": [
+        "cot"
+      ],
+      "block_type": 19,
+      "callout": {
+        "background_color": 1,
+        "border_color": 1,
+        "emoji_id": "bulb"
+      }
+    },
+    {
+      "block_id": "cot",
+      "parent_id": "co",
+      "block_type": 2,
+      "text": {
+        "style": {},
+        "elements": [
+          {
+            "text_run": {
+              "content": "note text",
+              "text_element_style": {}
+            }
+          }
+        ]
+      }
+    },
+    {
+      "block_id": "bl",
+      "parent_id": "ROOTDOC",
+      "block_type": 12,
+      "bullet": {
+        "style": {},
+        "elements": [
+          {
+            "text_run": {
+              "content": "a bullet",
+              "text_element_style": {}
+            }
+          }
+        ]
+      }
+    }
+  ]
+}

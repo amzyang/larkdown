@@ -1,0 +1,406 @@
+package core
+
+import (
+	"fmt"
+	"os"
+	"path/filepath"
+	"regexp"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/amzyang/larkdown/utils"
+	"gopkg.in/yaml.v3"
+)
+
+// Heading 标题信息
+type Heading struct {
+	Level    int       // 1-9
+	Text     string    // 标题文本
+	Children []Heading // 子标题
+}
+
+// DocMeta 单个文档的元信息
+type DocMeta struct {
+	Title    string    // 文档标题
+	RelPath  string    // 相对路径 (如 "子目录/文档.md")
+	Headings []Heading // 标题层级结构
+}
+
+// FolderNode 目录树节点
+type FolderNode struct {
+	Name     string
+	RelPath  string
+	Docs     []DocMeta     // 该目录下的文档
+	Children []*FolderNode // 子目录
+}
+
+// DocsIndex 整个下载任务的索引
+type DocsIndex struct {
+	RootName    string      // 根目录/Wiki 名称
+	OutputDir   string      // 输出目录
+	Docs        []DocMeta   // 扁平文档列表（用于 llms.txt）
+	Tree        *FolderNode // 目录树结构（用于 docs_map.md）
+	GeneratedAt time.Time
+	mu          sync.Mutex
+}
+
+// NewDocsIndex 创建新的索引
+func NewDocsIndex(rootName, outputDir string) *DocsIndex {
+	return &DocsIndex{
+		RootName:    rootName,
+		OutputDir:   outputDir,
+		Docs:        make([]DocMeta, 0),
+		Tree:        &FolderNode{Name: rootName, RelPath: ""},
+		GeneratedAt: time.Now(),
+	}
+}
+
+// AddDoc 添加文档到索引（线程安全）
+func (idx *DocsIndex) AddDoc(meta DocMeta, folderPath string) {
+	idx.mu.Lock()
+	defer idx.mu.Unlock()
+
+	// 计算相对于 outputDir 的路径
+	relFolderPath, _ := filepath.Rel(idx.OutputDir, folderPath)
+	if relFolderPath == "." {
+		relFolderPath = ""
+	}
+
+	// 更新 meta.RelPath 为完整相对路径
+	if relFolderPath != "" {
+		meta.RelPath = filepath.Join(relFolderPath, meta.RelPath)
+	}
+
+	// 添加到扁平列表
+	idx.Docs = append(idx.Docs, meta)
+
+	// 添加到目录树
+	idx.addToTree(meta, relFolderPath)
+}
+
+// addToTree 将文档添加到目录树
+func (idx *DocsIndex) addToTree(meta DocMeta, relFolderPath string) {
+	node := idx.Tree
+
+	if relFolderPath != "" {
+		parts := strings.Split(relFolderPath, string(filepath.Separator))
+		for _, part := range parts {
+			found := false
+			for _, child := range node.Children {
+				if child.Name == part {
+					node = child
+					found = true
+					break
+				}
+			}
+			if !found {
+				newNode := &FolderNode{
+					Name:    part,
+					RelPath: filepath.Join(node.RelPath, part),
+				}
+				node.Children = append(node.Children, newNode)
+				node = newNode
+			}
+		}
+	}
+
+	node.Docs = append(node.Docs, meta)
+}
+
+// ComputeMdFilename 计算 Markdown 文件名
+func ComputeMdFilename(title, urlToken string, config OutputConfig) string {
+	if config.TitleAsFilename {
+		name := utils.SanitizeFileName(title)
+		if name == "" {
+			name = urlToken
+		}
+		return fmt.Sprintf("%s.md", name)
+	}
+	return fmt.Sprintf("%s.md", urlToken)
+}
+
+// BuildHeadingTree 将扁平标题列表构建为树形结构
+func BuildHeadingTree(flat []Heading) []Heading {
+	if len(flat) == 0 {
+		return nil
+	}
+
+	var result []Heading
+	var stack []*Heading
+
+	for _, h := range flat {
+		newHeading := Heading{
+			Level: h.Level,
+			Text:  h.Text,
+		}
+
+		// 找到正确的父节点
+		for len(stack) > 0 && stack[len(stack)-1].Level >= h.Level {
+			stack = stack[:len(stack)-1]
+		}
+
+		if len(stack) == 0 {
+			result = append(result, newHeading)
+			stack = append(stack, &result[len(result)-1])
+		} else {
+			parent := stack[len(stack)-1]
+			parent.Children = append(parent.Children, newHeading)
+			stack = append(stack, &parent.Children[len(parent.Children)-1])
+		}
+	}
+
+	return result
+}
+
+// GenerateLlmsTxt 生成 llms.txt 内容
+func GenerateLlmsTxt(idx *DocsIndex) string {
+	var buf strings.Builder
+	buf.WriteString(fmt.Sprintf("# %s Docs\n\n## Docs\n", idx.RootName))
+
+	for _, doc := range idx.Docs {
+		// 转义标题中的特殊字符
+		title := escapeMarkdownLink(doc.Title)
+		buf.WriteString(fmt.Sprintf("- [%s](%s)\n", title, doc.RelPath))
+	}
+	return buf.String()
+}
+
+// GenerateDocsMap 生成 docs_map.md 内容
+func GenerateDocsMap(idx *DocsIndex) string {
+	var buf strings.Builder
+	buf.WriteString(fmt.Sprintf("# %s Documentation Map\n\n", idx.RootName))
+	buf.WriteString(fmt.Sprintf("> Auto-generated at: %s\n\n",
+		idx.GeneratedAt.Format(time.RFC3339)))
+
+	writeFolder(&buf, idx.Tree, 0)
+	return buf.String()
+}
+
+func writeFolder(buf *strings.Builder, node *FolderNode, depth int) {
+	// 写入文件夹标题（深度 > 0 时）
+	if node.Name != "" && depth > 0 {
+		buf.WriteString(fmt.Sprintf("## %s\n\n", node.Name))
+	}
+
+	// 写入该目录下的文档
+	for _, doc := range node.Docs {
+		title := escapeMarkdownLink(doc.Title)
+		buf.WriteString(fmt.Sprintf("### [%s](%s)\n", title, doc.RelPath))
+		if len(doc.Headings) == 0 {
+			buf.WriteString("* (No headings found)\n")
+		} else {
+			writeHeadings(buf, doc.Headings, 0)
+		}
+		buf.WriteString("\n")
+	}
+
+	// 递归处理子目录
+	for _, child := range node.Children {
+		writeFolder(buf, child, depth+1)
+	}
+}
+
+func writeHeadings(buf *strings.Builder, headings []Heading, indent int) {
+	prefix := strings.Repeat("  ", indent)
+	for _, h := range headings {
+		buf.WriteString(fmt.Sprintf("%s* %s\n", prefix, h.Text))
+		if len(h.Children) > 0 {
+			writeHeadings(buf, h.Children, indent+1)
+		}
+	}
+}
+
+// escapeMarkdownLink 转义 Markdown 链接中的特殊字符
+func escapeMarkdownLink(text string) string {
+	text = strings.ReplaceAll(text, "[", "\\[")
+	text = strings.ReplaceAll(text, "]", "\\]")
+	return text
+}
+
+// WriteDocsIndex 写入索引文件到磁盘
+func WriteDocsIndex(idx *DocsIndex, outputDir string) error {
+	// 确保输出目录存在
+	if err := os.MkdirAll(outputDir, 0o755); err != nil {
+		return err
+	}
+
+	// 写入 llms.txt
+	llmsTxt := GenerateLlmsTxt(idx)
+	llmsPath := filepath.Join(outputDir, "llms.txt")
+	if err := os.WriteFile(llmsPath, []byte(llmsTxt), 0o644); err != nil {
+		return fmt.Errorf("写入 llms.txt 失败: %w", err)
+	}
+	fmt.Printf("Generated %s\n", llmsPath)
+
+	// 写入 docs_map.md
+	docsMap := GenerateDocsMap(idx)
+	docsMapPath := filepath.Join(outputDir, "docs_map.md")
+	if err := os.WriteFile(docsMapPath, []byte(docsMap), 0o644); err != nil {
+		return fmt.Errorf("写入 docs_map.md 失败: %w", err)
+	}
+	fmt.Printf("Generated %s\n", docsMapPath)
+
+	return nil
+}
+
+// FrontMatter 文档的 YAML frontmatter 元数据
+type FrontMatter struct {
+	Source string `yaml:"source"`
+}
+
+// GenerateFrontMatter 生成 HTML 注释格式的 frontmatter（放在文件末尾）
+func GenerateFrontMatter(fm FrontMatter) string {
+	if fm.Source == "" {
+		return ""
+	}
+	data, err := yaml.Marshal(&fm)
+	if err != nil {
+		return ""
+	}
+	return "<!--\n" + string(data) + "-->\n"
+}
+
+// ParseFrontMatter 解析 md 文件的 frontmatter
+// 返回: frontmatter 数据、正文内容（不含 frontmatter）、错误
+// 优先匹配新格式（文件末尾 HTML 注释），向后兼容旧格式（文件顶部 ---）
+func ParseFrontMatter(content string) (*FrontMatter, string, error) {
+	if fm, body, err := parseCommentFrontMatter(content); fm != nil || err != nil {
+		return fm, body, err
+	}
+	return parseLegacyFrontMatter(content)
+}
+
+// parseCommentFrontMatter 解析文件末尾 <!-- --> 格式的 frontmatter
+func parseCommentFrontMatter(content string) (*FrontMatter, string, error) {
+	lastOpen := strings.LastIndex(content, "<!--\n")
+	if lastOpen == -1 {
+		return nil, content, nil
+	}
+	closeIdx := strings.Index(content[lastOpen:], "\n-->")
+	if closeIdx == -1 {
+		return nil, content, nil
+	}
+	closeIdx += lastOpen
+	// 注释块后面必须没有非空内容（确保是文件末尾）
+	after := content[closeIdx+4:] // skip "\n-->"
+	if strings.TrimSpace(after) != "" {
+		return nil, content, nil
+	}
+
+	yamlContent := content[lastOpen+5 : closeIdx]
+	var fm FrontMatter
+	if err := yaml.Unmarshal([]byte(yamlContent), &fm); err != nil {
+		return nil, content, fmt.Errorf("解析 frontmatter 失败: %w", err)
+	}
+	if fm.Source == "" {
+		return nil, content, nil
+	}
+
+	body := strings.TrimRight(content[:lastOpen], "\n") + "\n"
+	return &fm, body, nil
+}
+
+// parseLegacyFrontMatter 解析旧格式（文件顶部 ---）的 frontmatter，向后兼容
+func parseLegacyFrontMatter(content string) (*FrontMatter, string, error) {
+	if !strings.HasPrefix(content, "---\n") {
+		return nil, content, nil
+	}
+
+	endIndex := strings.Index(content[4:], "\n---")
+	if endIndex == -1 {
+		return nil, content, nil
+	}
+
+	yamlContent := content[4 : 4+endIndex]
+	body := content[4+endIndex+4:]
+	body = strings.TrimLeft(body, "\n")
+
+	var fm FrontMatter
+	if err := yaml.Unmarshal([]byte(yamlContent), &fm); err != nil {
+		return nil, content, fmt.Errorf("解析 frontmatter 失败: %w", err)
+	}
+
+	return &fm, body, nil
+}
+
+// ExtractTitle 从 markdown 正文提取标题
+// fallback 链：ATX H1 → 首个任意级 ATX 标题 → 空字符串
+func ExtractTitle(body string) string {
+	lines := strings.Split(body, "\n")
+	// 第一轮：找 ATX H1
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "# ") && !strings.HasPrefix(line, "## ") {
+			return strings.TrimSpace(line[2:])
+		}
+	}
+	// 第二轮：找任意级别 ATX 标题
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "#") {
+			i := 0
+			for i < len(line) && line[i] == '#' {
+				i++
+			}
+			if i < len(line) && line[i] == ' ' {
+				title := strings.TrimSpace(line[i+1:])
+				if title != "" {
+					return title
+				}
+			}
+		}
+	}
+	return ""
+}
+
+// FindStaleFile 在 outputDir 中查找与 urlToken 关联但文件名不同的旧 md 文件。
+func FindStaleFile(outputDir, newFilename, urlToken string) (string, error) {
+	matches, err := filepath.Glob(filepath.Join(outputDir, "*.md"))
+	if err != nil {
+		return "", err
+	}
+	for _, path := range matches {
+		base := filepath.Base(path)
+		if base == newFilename {
+			continue
+		}
+		content, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+		fm, _, err := ParseFrontMatter(string(content))
+		if err != nil || fm == nil {
+			continue
+		}
+		if ExtractTokenFromURL(fm.Source) == urlToken {
+			return path, nil
+		}
+	}
+	return "", nil
+}
+
+// ExtractTokenFromURL 从飞书 URL 中提取文档 token
+func ExtractTokenFromURL(url string) string {
+	re := regexp.MustCompile(`/(wiki|docx|docs)/([a-zA-Z0-9]+)`)
+	if m := re.FindStringSubmatch(url); len(m) == 3 {
+		return m[2]
+	}
+	return ""
+}
+
+// RemoveFirstHeading 从 markdown 正文移除第一个一级标题
+// 用于上传时避免文档标题重复
+func RemoveFirstHeading(body string) string {
+	lines := strings.Split(body, "\n")
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		// 匹配 ATX 风格标题: # Title
+		if strings.HasPrefix(trimmed, "# ") && !strings.HasPrefix(trimmed, "## ") {
+			// 移除这一行，保留其余内容
+			result := strings.Join(append(lines[:i], lines[i+1:]...), "\n")
+			return strings.TrimPrefix(result, "\n")
+		}
+	}
+	return body
+}

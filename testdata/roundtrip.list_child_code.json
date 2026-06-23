@@ -1,0 +1,81 @@
+{
+  "document": {
+    "document_id": "ROOTDOC",
+    "title": "blah"
+  },
+  "blocks": [
+    {
+      "block_id": "ROOTDOC",
+      "children": [
+        "foo",
+        "bul"
+      ],
+      "block_type": 1,
+      "page": {
+        "style": {},
+        "elements": [
+          {
+            "text_run": {
+              "content": "blah",
+              "text_element_style": {}
+            }
+          }
+        ]
+      }
+    },
+    {
+      "block_id": "foo",
+      "parent_id": "ROOTDOC",
+      "block_type": 2,
+      "text": {
+        "style": {},
+        "elements": [
+          {
+            "text_run": {
+              "content": "foo",
+              "text_element_style": {}
+            }
+          }
+        ]
+      }
+    },
+    {
+      "block_id": "bul",
+      "parent_id": "ROOTDOC",
+      "block_type": 12,
+      "bullet": {
+        "style": {},
+        "elements": [
+          {
+            "text_run": {
+              "content": "bar",
+              "text_element_style": {}
+            }
+          }
+        ]
+      },
+      "children": [
+        "cod"
+      ]
+    },
+    {
+      "block_id": "cod",
+      "parent_id": "bul",
+      "block_type": 14,
+      "code": {
+        "style": {
+          "language": 7,
+          "wrap": false
+        },
+        "elements": [
+          {
+            "text_run": {
+              "content": "echo \"hello world\"",
+              "text_element_style": {}
+            }
+          }
+        ]
+      }
+    }
+  ]
+}
