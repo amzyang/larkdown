@@ -28,6 +28,13 @@ type Uploader struct {
 	// 由 fillBoards 填充，在 incrementalUpdate/fullUpdate 末尾写入画板映射记录
 	// （board_manifest.go），供后续上传跳过未变画板。每次 upload 命令新建 Uploader，无需重置。
 	pendingBoardMappings []BoardMapping
+	// pendingMediaMappings 累积本次上传图片/文件素材的「markdown 路径 → token + 内容 md5」映射，
+	// 由各上传点 recordMediaMapping 填充，在 incrementalUpdate/fullUpdate 末尾写入媒体映射记录
+	// （media_manifest.go），供后续上传按内容跳过未变媒体 / 原地替换已变媒体。
+	pendingMediaMappings []MediaMapping
+	// mediaBaselineByToken 本次上传由 applyMediaTokenMappings 按路径映射写回 token 的块的基准 md5
+	// （token→md5），供 Equal 内容检测据此判断媒体是否已变（路径映射命中的块用 sidecar 基准而非下载缓存）。
+	mediaBaselineByToken map[string]string
 }
 
 // NewUploader 创建上传器（画板映射等持久状态落默认配置目录）。
@@ -227,6 +234,8 @@ func (u *Uploader) fullUpdate(ctx context.Context, documentID, filePath, body st
 		resolveEntityTokens(localResult, remoteEntityTokens(rootBlocks, blockMap))
 		// 复用未变 plantuml 画板的历史 token，使其计入 referencedTokens 而被保留、不重建
 		u.applyBoardTokenMappings(localResult, documentID, rootBlocks)
+		// 复用未变图片/文件的历史 token（按 markdown 路径），使其计入 referencedTokens 而被保留、不重传
+		u.applyMediaTokenMappings(localResult, documentID, rootBlocks, blockMap)
 		referencedTokens = localEntityTokenSet(localResult)
 	}
 
@@ -249,6 +258,7 @@ func (u *Uploader) fullUpdate(ctx context.Context, documentID, filePath, body st
 		// best-effort 校正被保留实体位置（失败回退：实体已保留，仅位置可能不对齐）
 		u.reconcileEntityPositions(ctx, documentID, localResult)
 		u.persistBoardMappings(documentID)
+		u.persistMediaMappings(documentID)
 	}
 
 	return nil
@@ -396,6 +406,8 @@ func (u *Uploader) incrementalUpdate(ctx context.Context, documentID, filePath, 
 	resolveEntityTokens(localResult, remoteEntityTokens(rootBlocks, blockMap))
 	// 对无 token 的本地 plantuml 画板，按源 hash 复用历史 token（源未变则跳过重建）
 	u.applyBoardTokenMappings(localResult, documentID, rootBlocks)
+	// 对无 token 的本地图片/文件，按 markdown 路径复用历史 token（内容未变则跳过重传）
+	u.applyMediaTokenMappings(localResult, documentID, rootBlocks, blockMap)
 
 	// 3. 快速路径：远程为空 → 直接全量写入
 	if len(rootBlocks) == 0 {
@@ -408,6 +420,7 @@ func (u *Uploader) incrementalUpdate(ctx context.Context, documentID, filePath, 
 				return err
 			}
 			u.persistBoardMappings(documentID)
+			u.persistMediaMappings(documentID)
 		}
 		return nil
 	}
@@ -462,7 +475,7 @@ func (u *Uploader) incrementalUpdate(ctx context.Context, documentID, filePath, 
 			continue
 		}
 		localPath := entityLocalPath(localResult, op.LocalIdx, ref.isFile)
-		if localPath == "" || !entityContentChanged(u.client.imageCache, ref, localPath, filepath.Dir(filePath)) {
+		if localPath == "" || !u.mediaChanged(ref, localPath, filepath.Dir(filePath)) {
 			continue
 		}
 		if ref.isFile {
@@ -562,8 +575,9 @@ func (u *Uploader) incrementalUpdate(ctx context.Context, documentID, filePath, 
 	// 9. best-effort 校正 round-trip 实体位置（白板/图片/文件被重排时移到 markdown 指定位置）
 	u.reconcileEntityPositions(ctx, documentID, localResult)
 
-	// 10. 写回本次新建画板的「源 hash → token」映射记录（供后续上传跳过未变画板）
+	// 10. 写回本次新建画板/媒体的映射记录（供后续上传跳过未变画板、按内容跳过未变媒体）
 	u.persistBoardMappings(documentID)
+	u.persistMediaMappings(documentID)
 
 	// docs_ai 原地替换有失败：文档已尽力更新（仅这些块保留旧形态），以错误收尾让用户重跑。
 	if docsAIFailures > 0 {
@@ -608,20 +622,29 @@ func printDryRunReport(
 		printDryRunRegions(regions, rootBlocks, localResult, docsAIEnabled)
 	}
 
-	// Summary
-	var totalReplace, totalDelete, totalInsert, totalDocsAI int
-	var textUpdates, imageUpdates, fileUpdates int
+	// 媒体内容替换（签名 Equal 但内容已变 / 区域内跨块替换）：原地 replace_image/replace_file 保 block_id。
+	// 这些任务收敛在 imageReplaces/fileReplaces，「Equal 但内容变」一类不落在任何变更区域，
+	// 单列以免在报告中隐身——增量上传是否真识别了媒体改动，靠这一段才看得见。
+	if len(imageReplaces) > 0 || len(fileReplaces) > 0 {
+		fmt.Println("\n--- 媒体内容替换（原地 replace，保 block_id）---")
+		for _, t := range imageReplaces {
+			fmt.Printf("  REPLACE  Image  %s  block_id=%s\n", filepath.Base(t.imgPath), t.blockID)
+		}
+		for _, t := range fileReplaces {
+			fmt.Printf("  REPLACE  File   %s  block_id=%s\n", filepath.Base(t.filePath), t.blockID)
+		}
+	}
+
+	// Summary：image/file 替换统一以 imageReplaces/fileReplaces 计数（含「Equal 但内容变」与
+	// 「区域内替换」两类来源），区域循环只统计文本类替换，避免与媒体列表重复计数。
+	var totalDelete, totalInsert, totalDocsAI, textUpdates int
 	for _, region := range regions {
 		for _, op := range PairBlocks(region, rootBlocks, localResult, docsAIEnabled) {
 			switch op.Type {
 			case PairedOpReplace:
-				totalReplace++
-				kind := classifyReplaceKind(rootBlocks[op.RemoteIdx], localResult.TopBlocks[op.LocalIdx])
-				switch kind {
-				case "image":
-					imageUpdates++
-				case "file":
-					fileUpdates++
+				switch classifyReplaceKind(rootBlocks[op.RemoteIdx], localResult.TopBlocks[op.LocalIdx]) {
+				case "image", "file":
+					// 由 imageReplaces/fileReplaces 统一计数，避免重复
 				default:
 					textUpdates++
 				}
@@ -634,6 +657,9 @@ func printDryRunReport(
 			}
 		}
 	}
+	imageUpdates := len(imageReplaces)
+	fileUpdates := len(fileReplaces)
+	totalReplace := textUpdates + imageUpdates + fileUpdates
 
 	fmt.Println("\n=== Summary ===")
 	fmt.Printf("Replace: %d (text: %d, image: %d, file: %d)\n", totalReplace, textUpdates, imageUpdates, fileUpdates)
@@ -977,6 +1003,7 @@ func (u *Uploader) applyMediaReplaces(ctx context.Context, documentID, filePath 
 				ReplaceImage: &lark.BatchUpdateDocxDocumentBlockReqRequestReplaceImage{Token: fileToken},
 			})
 			fmt.Printf("已更新图片: %s → %s\n", imgName, fileToken)
+			u.recordMediaMapping(task.imgPath, fileToken, imgData, false)
 		}
 		for i := 0; i < len(reqs); i += 200 {
 			end := min(i+200, len(reqs))
@@ -1004,6 +1031,7 @@ func (u *Uploader) applyMediaReplaces(ctx context.Context, documentID, filePath 
 				ReplaceFile: &lark.BatchUpdateDocxDocumentBlockReqRequestReplaceFile{Token: fileToken},
 			})
 			fmt.Printf("已更新文件: %s → %s\n", fileName, fileToken)
+			u.recordMediaMapping(task.filePath, fileToken, fileData, true)
 		}
 		for i := 0; i < len(reqs); i += 200 {
 			end := min(i+200, len(reqs))
@@ -1045,7 +1073,7 @@ func (u *Uploader) replacePreservedEntities(ctx context.Context, documentID, fil
 			continue
 		}
 		le, ok := byToken[ref.token]
-		if !ok || !entityContentChanged(u.client.imageCache, ref, le.path, filepath.Dir(filePath)) {
+		if !ok || !u.mediaChanged(ref, le.path, filepath.Dir(filePath)) {
 			continue
 		}
 		if ref.isFile {
@@ -1314,6 +1342,7 @@ func (u *Uploader) insertBlocks(
 				ReplaceImage: &lark.BatchUpdateDocxDocumentBlockReqRequestReplaceImage{Token: fileToken},
 			})
 			fmt.Printf("已上传图片: %s → %s\n", filepath.Base(imgPath), fileToken)
+			u.recordMediaMapping(imgPath, fileToken, imgData, false)
 		}
 		for i := 0; i < len(imgBatchRequests); i += 200 {
 			end := min(i+200, len(imgBatchRequests))
@@ -1512,6 +1541,7 @@ func (u *Uploader) uploadAndReplace(
 	blockIDs, paths []string,
 	uploadFn mediaUploadFunc, buildReqFn batchRequestFunc,
 	typeName string,
+	record func(path, token string, data []byte),
 ) error {
 	var batchRequests []*lark.BatchUpdateDocxDocumentBlockReqRequest
 
@@ -1530,6 +1560,9 @@ func (u *Uploader) uploadAndReplace(
 		}
 
 		batchRequests = append(batchRequests, buildReqFn(blockID, fileToken))
+		if record != nil {
+			record(path, fileToken, data)
+		}
 		fmt.Printf("已上传%s: %s → %s\n", typeName, filepath.Base(path), fileToken)
 	}
 
@@ -1552,6 +1585,7 @@ func (u *Uploader) uploadMedia(
 	insertedBlocks []*lark.DocxBlock, flatToOrigIndex []int,
 	uploadFn mediaUploadFunc, buildReqFn batchRequestFunc,
 	typeName string,
+	record func(path, token string, data []byte),
 ) error {
 	origToBlockID := make(map[int]string)
 	for i, origIdx := range flatToOrigIndex {
@@ -1576,7 +1610,7 @@ func (u *Uploader) uploadMedia(
 		resolvedPaths = append(resolvedPaths, paths[i])
 	}
 
-	return u.uploadAndReplace(ctx, documentID, filepath.Dir(filePath), blockIDs, resolvedPaths, uploadFn, buildReqFn, typeName)
+	return u.uploadAndReplace(ctx, documentID, filepath.Dir(filePath), blockIDs, resolvedPaths, uploadFn, buildReqFn, typeName, record)
 }
 
 // uploadImages 处理图片上传（batch_update replace_image）
@@ -1592,6 +1626,7 @@ func (u *Uploader) uploadImages(ctx context.Context, documentID, filePath string
 			}
 		},
 		"图片",
+		func(path, token string, data []byte) { u.recordMediaMapping(path, token, data, false) },
 	)
 }
 
@@ -1608,6 +1643,7 @@ func (u *Uploader) uploadFiles(ctx context.Context, documentID, filePath string,
 			}
 		},
 		"文件",
+		func(path, token string, data []byte) { u.recordMediaMapping(path, token, data, true) },
 	)
 }
 
@@ -1694,6 +1730,70 @@ func (u *Uploader) persistBoardMappings(documentID string) {
 	}
 }
 
+// applyMediaTokenMappings 读媒体映射记录，对无 token 的本地图片/文件按 markdown 路径写回历史 token
+// （仅当 token 仍在远程素材集合）。命中后该块签名与远程 Equal，增量更新进入 Equal 内容检测、
+// 据基准 md5 决定跳过或原地替换；写回块的基准 md5 暂存 mediaBaselineByToken 供该检测使用。
+func (u *Uploader) applyMediaTokenMappings(localResult *ConvertResult, documentID string, rootBlocks []*lark.DocxBlock, blockMap map[string]*lark.DocxBlock) {
+	if documentID == "" {
+		return
+	}
+	manifest, err := ReadMediaManifest(u.statePaths, documentID)
+	if err != nil || manifest == nil {
+		return
+	}
+	n, baseline := applyMediaPathMappings(localResult, documentID, manifest, remoteEntityTokens(rootBlocks, blockMap))
+	u.mediaBaselineByToken = baseline
+	if n > 0 {
+		fmt.Printf("复用 %d 个已有素材（内容未变则跳过重传）\n", n)
+	}
+}
+
+// mediaChanged 判断 round-trip 媒体内容相对上次上传是否已变：
+// 路径映射写回 token 的块（token 在 mediaBaselineByToken）用 sidecar 基准 md5 比对（不依赖下载缓存）；
+// 否则（文件名前缀机制 / 下载缓存路径）回退 entityContentChanged。
+func (u *Uploader) mediaChanged(ref entityRef, localPath, mdDir string) bool {
+	if baseline, ok := u.mediaBaselineByToken[ref.token]; ok {
+		lm, ok := fileMD5(resolveLocalPath(localPath, mdDir))
+		if !ok {
+			return false
+		}
+		return mediaContentChanged(baseline, lm)
+	}
+	return entityContentChanged(u.client.imageCache, ref, localPath, mdDir)
+}
+
+// recordMediaMapping 累积一条本次上传的媒体映射（markdown 路径 → token + 内容 md5），
+// 供 persistMediaMappings 末尾落盘。远程 URL（无本地编辑语义）或空 token 跳过。
+func (u *Uploader) recordMediaMapping(path, token string, data []byte, isFile bool) {
+	if token == "" || isRemoteURL(path) {
+		return
+	}
+	u.pendingMediaMappings = append(u.pendingMediaMappings, MediaMapping{
+		Path:   path,
+		Token:  token,
+		MD5:    bytesMD5(data),
+		IsFile: isFile,
+	})
+}
+
+// persistMediaMappings 把本次上传累积的媒体映射 upsert 进媒体映射记录并落盘。
+// 无新增映射时不写文件，避免无谓改动。
+func (u *Uploader) persistMediaMappings(documentID string) {
+	if len(u.pendingMediaMappings) == 0 || documentID == "" {
+		return
+	}
+	manifest, err := ReadMediaManifest(u.statePaths, documentID)
+	if err != nil || manifest == nil {
+		manifest = &MediaManifest{}
+	}
+	for _, m := range u.pendingMediaMappings {
+		manifest.upsert(documentID, m.Path, m.Token, m.MD5, m.IsFile)
+	}
+	if err := WriteMediaManifest(u.statePaths, documentID, manifest); err != nil {
+		fmt.Printf("警告: 写入媒体映射记录失败: %v\n", err)
+	}
+}
+
 // uploadImageMedia 上传图片素材
 func (u *Uploader) uploadImageMedia(ctx context.Context, documentID, blockID, imgPath string, imgData []byte) (string, error) {
 	resp, _, err := u.client.larkClient.Drive.UploadDriveMedia(ctx, &lark.UploadDriveMediaReq{
@@ -1767,6 +1867,7 @@ func (u *Uploader) uploadDescendantImages(ctx context.Context, documentID, fileP
 			}
 		},
 		"容器图片",
+		nil,
 	); err != nil {
 		fmt.Printf("警告: 批量替换容器图片失败: %v\n", err)
 	}

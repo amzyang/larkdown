@@ -160,14 +160,19 @@ func localEntityTokenSet(result *ConvertResult) map[string]bool {
 	return tokens
 }
 
+// bytesMD5 返回字节内容 md5（hex）。供「上传字节算基准 md5」与文件读取共用。
+func bytesMD5(data []byte) string {
+	sum := md5.Sum(data)
+	return hex.EncodeToString(sum[:])
+}
+
 // fileMD5 返回文件内容 md5；读取失败 ok=false。
 func fileMD5(path string) (string, bool) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return "", false
 	}
-	sum := md5.Sum(data)
-	return hex.EncodeToString(sum[:]), true
+	return bytesMD5(data), true
 }
 
 // cachedEntityMD5 返回缓存中该 token 原始字节的 md5；缓存缺失 ok=false。
@@ -215,6 +220,13 @@ func entityContentChanged(cache *ImageCache, ref entityRef, localPath, mdDir str
 		return false
 	}
 	return cm != lm
+}
+
+// mediaContentChanged 用 sidecar 记录的基准 md5 判断本地媒体是否已变（纯函数）。
+// 路径映射方案的变更基准来自媒体映射记录（上传时的内容 md5），不依赖下载缓存——
+// 新建文档的缓存里没有该 token 的原始字节，用缓存会漏判已变。
+func mediaContentChanged(baselineMD5, localMD5 string) bool {
+	return baselineMD5 != localMD5
 }
 
 // entityLocalPath 返回本地第 idx 个顶级块对应的实体文件路径（image 或 file）。

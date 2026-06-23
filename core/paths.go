@@ -36,10 +36,18 @@ func (p StatePaths) BoardsDir() string { return filepath.Join(p.base, "boards") 
 // PublishDir 返回发布记录目录 <base>/publish。
 func (p StatePaths) PublishDir() string { return filepath.Join(p.base, "publish") }
 
+// MediaDir 返回媒体映射目录 <base>/media。
+func (p StatePaths) MediaDir() string { return filepath.Join(p.base, "media") }
+
 // BoardManifestFile 按 document_id 定位画板映射文件 <base>/boards/<document_id>.yaml。
 // document_id 是飞书文档 token（纯 ASCII），可安全用作文件名。
 func (p StatePaths) BoardManifestFile(documentID string) string {
 	return filepath.Join(p.BoardsDir(), documentID+".yaml")
+}
+
+// MediaManifestFile 按 document_id 定位媒体映射文件 <base>/media/<document_id>.yaml。
+func (p StatePaths) MediaManifestFile(documentID string) string {
+	return filepath.Join(p.MediaDir(), documentID+".yaml")
 }
 
 // PublishManifestFile 按 target 绝对路径的 sha256 定位发布记录文件 <base>/publish/<sha256>.yaml。

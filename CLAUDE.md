@@ -71,7 +71,9 @@ make clean          # 删除构建产物
 - AddOns 插件块（如 mermaid，docs_ai XML 无法表达）
 - 跨「容器↔非容器」、跨「text-like↔非 text-like」等其余类型变化
 
-**PlantUML 画板免重建（`board_manifest.go`）：** 本地 ` ```plantuml ` 无 token，签名 `board:plantuml:<源hash>` 与远程 `board:<token>` 命名空间隔离、永不匹配，会每次重建。边车文件 `<file>.feishu2md-board.yaml` 持久化「源 hash → board token」映射：上传前 `applyBoardTokenMappings` 按源 hash 查映射写回 `Board.Token`（且校验 token 仍在远程），命中后签名与远程 Equal → 跳过重建；新建画板后 `persistBoardMappings` 刷新映射。源改了则 hash 变、查不到 → 仍重建（board API 无法原地改画板内容，硬限制）。
+**PlantUML 画板免重建（`board_manifest.go`）：** 本地 ` ```plantuml ` 无 token，签名 `board:plantuml:<源hash>` 与远程 `board:<token>` 命名空间隔离、永不匹配，会每次重建。中心化边车 `<UserConfigDir>/feishu2md/boards/<document_id>.yaml`（`StatePaths`，按文档归一、不随工作目录移动）持久化「源 hash → board token」映射：上传前 `applyBoardTokenMappings` 按源 hash 查映射写回 `Board.Token`（且校验 token 仍在远程），命中后签名与远程 Equal → 跳过重建；新建画板后 `persistBoardMappings` 刷新映射。源改了则 hash 变、查不到 → 仍重建（board API 无法原地改画板内容，硬限制）。
+
+**图片/文件免重传（`media_manifest.go`）：** 手写文件名的本地图片/文件（非 `<token>_原名` 下载产物）无 token，签名 `media:new:<idx>` 与远程 `media:<token>` 命名空间隔离、永不匹配，会每次重传素材（飞书素材不幂等、token 抖动、`block_id` 被删除重建）。中心化边车 `<UserConfigDir>/feishu2md/media/<document_id>.yaml` 持久化「markdown 路径 → {token, md5}」映射：上传前 `applyMediaTokenMappings` 按路径查映射写回 `Image/File.Token`（校验 token 仍在远程），命中后签名与远程 Equal → 进第一档「Equal 内容检测」用边车基准 md5（`mediaChanged`，不依赖下载缓存）判定——内容未变跳过、已变走 `replace_image`/`replace_file` 原地替换**保 block_id**；各上传点 `recordMediaMapping` 累积、`persistMediaMappings` 刷新。路径即身份锚点：改图（路径不变内容变）→ md5 不符 → 原地替换保 id；重命名（路径变）→ 失配 → 当新图重传。与画板互补（画板按源 hash、媒体按路径），同解「本地无 token、签名隔离」；视频即 File 附件，一并覆盖。`--incr --dryrun` 的「媒体内容替换」段会列出将被 `replace` 的媒体（内容真变才出现），用于核验增量是否真识别了改动。
 
 **改进路径**：`docs_ai/v1` 的 `block_replace` 已用于第二档跨类型 text-like 替换；`block_move_after` 用于实体位置校正（`BlockMoveAfter` / `reconcileEntityPositions`）。**容器块（table/callout/quote_container）走 docs_ai 尚未落地**——docs_ai markdown 模式下 callout 须用 XML（markdown 会被当普通引用块）、table 的合并/列宽/背景色无法用 markdown 表达，需先引入 `DescendantGroup→docs_ai XML` 序列化器才能开放（届时跨类型/容器块可统一走 `block_replace`）。`str_replace`（子串级、保 block_id）对同类型文本块无增量价值（已由 batch_update 覆盖）。
 
