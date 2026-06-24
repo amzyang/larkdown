@@ -167,3 +167,30 @@ func TestEntityContentChanged_RemoteURL(t *testing.T) {
 	assert.False(t, entityContentChanged(cache, ref, "https://example.com/a.png", ""), "远程 URL 应判未变")
 	assert.False(t, entityContentChanged(cache, ref, "http://example.com/a.png", ""), "远程 URL 应判未变")
 }
+
+func TestCountUntokenedMedia(t *testing.T) {
+	result := &ConvertResult{
+		TopBlocks: []*lark.DocxBlock{
+			{BlockType: lark.DocxBlockTypeImage, Image: &lark.DocxBlockImage{}},           // 0 无 token → 计
+			{BlockType: lark.DocxBlockTypeImage, Image: &lark.DocxBlockImage{Token: "T"}}, // 1 有 token（前缀已解析）→ 不计
+			{BlockType: lark.DocxBlockTypeImage, Image: &lark.DocxBlockImage{}},           // 2 远程 URL → 不计
+			{BlockType: lark.DocxBlockTypeFile, File: &lark.DocxBlockFile{}},              // 3 无 token → 计
+		},
+		ImageIndices: []int{0, 1, 2},
+		ImagePaths:   []string{"a.png", "T_b.png", "https://x/c.png"},
+		FileIndices:  []int{3},
+		FilePaths:    []string{"d.pdf"},
+	}
+	assert.Equal(t, 2, countUntokenedMedia(result), "无 token 且非远程 URL 的图片+文件计入")
+}
+
+func TestCountUntokenedBoards(t *testing.T) {
+	result := &ConvertResult{
+		TopBlocks: []*lark.DocxBlock{
+			{BlockType: lark.DocxBlockTypeBoard, Board: &lark.DocxBlockBoard{}},           // 0 无 token → 计
+			{BlockType: lark.DocxBlockTypeBoard, Board: &lark.DocxBlockBoard{Token: "B"}}, // 1 有 token（已复用）→ 不计
+		},
+		BoardIndices: []int{0, 1},
+	}
+	assert.Equal(t, 1, countUntokenedBoards(result), "仅无 token 画板计入")
+}

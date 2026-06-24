@@ -1704,7 +1704,13 @@ func (u *Uploader) applyBoardTokenMappings(localResult *ConvertResult, documentI
 		return
 	}
 	manifest, err := ReadBoardManifest(u.statePaths, documentID)
-	if err != nil || manifest == nil {
+	if err != nil {
+		return
+	}
+	if manifest == nil {
+		if n := countUntokenedBoards(localResult); n > 0 {
+			fmt.Printf("首次上传/无画板映射：%d 个画板将创建并建立映射，源未变则后续复用\n", n)
+		}
 		return
 	}
 	if n := applyBoardMappings(localResult, documentID, manifest, remoteBoardTokens(rootBlocks)); n > 0 {
@@ -1738,7 +1744,13 @@ func (u *Uploader) applyMediaTokenMappings(localResult *ConvertResult, documentI
 		return
 	}
 	manifest, err := ReadMediaManifest(u.statePaths, documentID)
-	if err != nil || manifest == nil {
+	if err != nil {
+		return
+	}
+	if manifest == nil {
+		if n := countUntokenedMedia(localResult); n > 0 {
+			fmt.Printf("首次上传/无媒体映射：%d 个素材将上传并建立映射，后续内容未变则复用\n", n)
+		}
 		return
 	}
 	n, baseline := applyMediaPathMappings(localResult, documentID, manifest, remoteEntityTokens(rootBlocks, blockMap))
@@ -1769,7 +1781,7 @@ func (u *Uploader) recordMediaMapping(path, token string, data []byte, isFile bo
 		return
 	}
 	u.pendingMediaMappings = append(u.pendingMediaMappings, MediaMapping{
-		Path:   path,
+		Path:   normalizeMediaPath(path),
 		Token:  token,
 		MD5:    bytesMD5(data),
 		IsFile: isFile,

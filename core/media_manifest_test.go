@@ -176,6 +176,27 @@ func TestApplyMediaPathMappings(t *testing.T) {
 	tok1 := dup.TopBlocks[1].Image.Token
 	assert.NotEqual(t, tok0, tok1, "两个重复引用应取到不同 token")
 	assert.ElementsMatch(t, []string{"t_a", "t_b"}, []string{tok0, tok1})
+
+	// 路径写法抖动：边车存 "./images/foo.png"，本地引用 "images/foo.png" → 归一化后命中（不再当新图重传）
+	driftManifest := &MediaManifest{DocumentID: "doc1", Entries: []MediaMapping{
+		{Path: "./images/foo.png", Token: "drift_tok", MD5: "dm"},
+	}}
+	drift := imageResult("images/foo.png")
+	n, _ = applyMediaPathMappings(drift, "doc1", driftManifest, map[string]bool{"drift_tok": true})
+	assert.Equal(t, 1, n, "路径写法抖动（./images/foo.png vs images/foo.png）应归一化后命中")
+	assert.Equal(t, "drift_tok", drift.TopBlocks[0].Image.Token)
+}
+
+func TestNormalizeMediaPath(t *testing.T) {
+	// 本地相对路径：消除 ./、重复分隔符、. 段
+	assert.Equal(t, "a.png", normalizeMediaPath("./a.png"))
+	assert.Equal(t, "images/a.png", normalizeMediaPath("images/a.png"))
+	assert.Equal(t, "images/a.png", normalizeMediaPath("./images/a.png"))
+	assert.Equal(t, "a/b.png", normalizeMediaPath("a//b.png"))
+	assert.Equal(t, "b.png", normalizeMediaPath("a/../b.png"))
+	// 远程 URL 原样返回（path.Clean 会折叠 https:// 的 //，必须跳过）
+	assert.Equal(t, "https://example.com/a.png", normalizeMediaPath("https://example.com/a.png"))
+	assert.Equal(t, "http://example.com//x/a.png", normalizeMediaPath("http://example.com//x/a.png"))
 }
 
 func TestApplyMediaPathMappingsFile(t *testing.T) {

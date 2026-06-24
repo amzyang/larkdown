@@ -36,6 +36,20 @@ func TestSelectFullUpdateDeletions_PreservesMediaEntities(t *testing.T) {
 	assert.Equal(t, []int{0, 3}, del, "保留被引用图片与 view 包裹文件，删除文本与未引用图片")
 }
 
+// TestSelectFullUpdateDeletions_PreservesBoard 全量上传保留被引用的白板（token 仍在本地），删除未引用白板与其他块。
+func TestSelectFullUpdateDeletions_PreservesBoard(t *testing.T) {
+	rootBlocks := []*lark.DocxBlock{
+		mkRemoteText("t0", "DOC", "x"), // 0 删
+		{BlockID: "wb1", BlockType: lark.DocxBlockTypeBoard, Board: &lark.DocxBlockBoard{Token: "WA"}}, // 1 引用 → 保留
+		{BlockID: "wb2", BlockType: lark.DocxBlockTypeBoard, Board: &lark.DocxBlockBoard{Token: "WC"}}, // 2 未引用 → 删
+	}
+	referenced := map[string]bool{"WA": true}
+
+	// blockMap 传 nil：Board 经 isRoundTripBoard 取 token、text 非媒体实体，均不访问 blockMap
+	del := selectFullUpdateDeletions(rootBlocks, nil, referenced)
+	assert.Equal(t, []int{0, 2}, del, "保留被引用白板，删除文本与未引用白板")
+}
+
 // TestCollectDeletions_PreservesReorderedImage 图片被重排（LCS 判 delete）时，token 仍在本地 → 绝不删除。
 func TestCollectDeletions_PreservesReorderedImage(t *testing.T) {
 	rootBlocks := []*lark.DocxBlock{

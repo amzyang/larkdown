@@ -4,6 +4,7 @@ import (
 	"crypto/md5"
 	"encoding/hex"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 
@@ -194,6 +195,17 @@ func isRemoteURL(path string) bool {
 	return strings.HasPrefix(path, "http://") || strings.HasPrefix(path, "https://")
 }
 
+// normalizeMediaPath 归一化 markdown 媒体引用路径用于映射匹配：远程 URL 原样返回
+// （path.Clean 会折叠 https:// 的 //，必须跳过），本地相对路径用 path.Clean 消除
+// ./、重复分隔符、. 段等写法抖动。用 path（slash 语义）而非 filepath（OS 相关），
+// 因 markdown 引用路径是 URL 风格、统一 / 分隔。
+func normalizeMediaPath(p string) string {
+	if isRemoteURL(p) {
+		return p
+	}
+	return path.Clean(p)
+}
+
 // resolveLocalPath 把 markdown 中的相对资源路径按 mdDir 解析为可读路径；绝对路径原样返回。
 // 与 resolveImageData 共用，确保「读字节上传」与「读字节算 md5」路径解析口径一致。
 func resolveLocalPath(path, mdDir string) string {
@@ -235,4 +247,32 @@ func entityLocalPath(result *ConvertResult, idx int, isFile bool) string {
 		return findFilePath(result, idx)
 	}
 	return findImagePath(result, idx)
+}
+
+// countUntokenedMedia 统计本地无 token、非远程 URL 的图片/文件数（首次上传将作新素材上传并建映射）。
+// 在 resolveEntityTokens 之后调用，故文件名前缀已解析 token 的下载产物不计入——只数手写文件名等需新传者。
+func countUntokenedMedia(result *ConvertResult) int {
+	n := 0
+	for i, idx := range result.ImageIndices {
+		if b := result.TopBlocks[idx]; b != nil && b.Image != nil && b.Image.Token == "" && !isRemoteURL(result.ImagePaths[i]) {
+			n++
+		}
+	}
+	for i, idx := range result.FileIndices {
+		if b := result.TopBlocks[idx]; b != nil && b.File != nil && b.File.Token == "" && !isRemoteURL(result.FilePaths[i]) {
+			n++
+		}
+	}
+	return n
+}
+
+// countUntokenedBoards 统计本地无 token 的画板数（首次上传将创建并建映射）。
+func countUntokenedBoards(result *ConvertResult) int {
+	n := 0
+	for _, idx := range result.BoardIndices {
+		if b := result.TopBlocks[idx]; b != nil && b.Board != nil && b.Board.Token == "" {
+			n++
+		}
+	}
+	return n
 }

@@ -26,7 +26,7 @@ type MediaManifest struct {
 
 // MediaMapping 单条媒体映射。
 type MediaMapping struct {
-	Path   string `yaml:"path"`    // markdown 引用路径，原样存（不 Clean、不绝对化）
+	Path   string `yaml:"path"`    // markdown 引用路径，归一化存（normalizeMediaPath：path.Clean，远程 URL 原样）
 	Token  string `yaml:"token"`   // 飞书图片/文件素材 token
 	MD5    string `yaml:"md5"`     // 上传字节的 md5，作下次变更基准
 	IsFile bool   `yaml:"is_file"` // true=File 附件（含视频卡片），false=Image
@@ -66,7 +66,7 @@ func (m *MediaManifest) lookupUnusedToken(documentID, path string, remoteTokens,
 		return "", ""
 	}
 	for _, e := range m.Entries {
-		if e.Path == path && remoteTokens[e.Token] && !used[e.Token] {
+		if normalizeMediaPath(e.Path) == normalizeMediaPath(path) && remoteTokens[e.Token] && !used[e.Token] {
 			return e.Token, e.MD5
 		}
 	}
