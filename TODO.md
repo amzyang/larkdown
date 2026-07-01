@@ -6,8 +6,9 @@
   - [x] markdown 最小化 diff
   - [ ] 支持使用外部文件引入
     - [ ] 使用外部文件 (eg: xlsx -> md)转 markdown 的方案，不自己使用 sheet 相关接口去拼接 markdown
-- [ ] 支持 增量更新、跳过已下载文件
+- [x] 支持 增量更新、跳过已下载文件
   - [x] image
+  - [x] 文档本体：下载时在 frontmatter 落 `version` 标记（Wiki 用 `obj_edit_time.revision_id`，普通 docx 用 `revision_id`，见 `DownloadVersion`），重复下载时本地标记与远程一致 → 跳过拉块与素材（仅一次轻量 GetDocxDocument）；`--force` 强制重新下载。已知限制：普通 docx 的纯白板编辑不更新 revision_id，感知不到（Wiki 不受影响，obj_edit_time 覆盖白板）
 - [ ] 支持 follow (比如文档中有引用其他文档的链接，自动下载)
 - [x] 记录/展示 diff?
 - [x] 支持白板
@@ -74,8 +75,9 @@
 - [ ] 上传时支持 anchor link 映射为飞书文档内 outline 锚点
   - eg: `[§6. SSE 协议规范](#6-sse-协议规范)` → 飞书文档内链接到对应标题块
   - 当前行为：anchor link 被渲染为纯文本（因飞书 API 不接受 `#...` URL）
-- [ ] upload --incr --dryrun 用于诊断调试
-  - [ ] 需要 normalize
+- [x] upload --incr --dryrun 用于诊断调试
+  - [x] 需要 normalize
+    - 结论：块级 diff 本身已规范化（签名基于 `canonicalTextContent`，空白外提/链接 URL 归一，`TestRoundTripSignatures` 保证下载产物 round-trip 全 Equal），无需再过 `NormalizeMarkdown`。真正的归一缺口在报告与执行不一致：执行侧 `collectDeletions` 会跳过「空文本块删除」与「实体仍被引用（重排）」，dryrun 却照报 DELETE。已抽出 `classifyDeletion` 供两侧共用，dryrun 现输出 SKIP-DEL / PRESERVE 并在 Summary 单列，与实际执行同口径
 - [ ] mirror subcommand
 - [x] bug: doesnt support image inside blockquote
 - [x] callout: 内嵌其它元素
