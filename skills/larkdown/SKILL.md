@@ -58,11 +58,11 @@ larkdown ul doc.md
 # 上传到指定空间和父节点
 larkdown ul doc.md -s <space_id> -p <parent_token>
 
-# 增量更新（仅修改变化的 block）
-larkdown ul doc.md --incr
-
-# 指定目标文档进行更新
+# 指定目标文档进行更新（默认增量更新，仅修改变化的 block）
 larkdown ul doc.md --source "https://example.feishu.cn/wiki/xxx"
+
+# 全量重建（删除远端所有 block 后重新上传）
+larkdown ul doc.md --full
 ```
 
 ## URL 类型自动检测
@@ -103,15 +103,16 @@ larkdown 根据 URL 路径自动识别类型，不需要额外 flag：
 | `--source`              | 目标飞书文档 URL（强制更新该文档） | -          |
 | `-s, --space`           | Wiki 空间 ID                       | my_library |
 | `-p, --parent`          | 父节点 token                       | -          |
-| `--incr, --incremental` | 增量更新（基于 LCS diff）          | false      |
+| `--full`                | 全量重建（删除远端所有 block 后重新上传）  | false      |
+| `--dryrun`              | 预览增量 diff，不修改远端（与 `--full` 互斥） | false      |
 
 `--source` 与 `--space`/`--parent` 互斥。
 
 **上传行为**：
 
 - **新建文档**：从 H1 提取标题，创建 Wiki 节点，上传内容，自动将 Wiki URL 写回文件 frontmatter 的 `source` 字段
-- **全量更新**（默认）：删除远端所有 block，重新上传
-- **增量更新**（`--incr`）：对比远端和本地 block 的内容签名，仅更新变化部分
+- **增量更新**（默认）：对比远端和本地 block 的内容签名（LCS diff），仅更新变化部分
+- **全量更新**（`--full`）：删除远端所有 block，重新上传
 
 ### publish
 

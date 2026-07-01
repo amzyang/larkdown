@@ -57,8 +57,8 @@ type UploadOptions struct {
 	Source          string // 目标飞书文档 URL（指定后强制更新该文档）
 	SpaceID         string // Wiki 空间 ID（可选，默认使用 my_library）
 	ParentNodeToken string // 父节点 token（可选，空则为根节点）
-	Incremental     bool   // 增量更新（只修改变化的块）
-	DryRun          bool   // 仅计算 diff 并输出报告，不执行写操作（需配合 Incremental）
+	Incremental     bool   // 增量更新（只修改变化的块，CLI 默认；false 为全量重建，对应 --full）
+	DryRun          bool   // 仅计算 diff 并输出报告，不执行写操作（需配合 Incremental，且仅支持更新已有文档）
 	Verbose         bool   // dryrun 时列出所有块（含未变化）
 }
 
@@ -130,6 +130,11 @@ func (u *Uploader) Upload(ctx context.Context, filePath string, opts UploadOptio
 
 // createDocument 新建文档到 Wiki
 func (u *Uploader) createDocument(ctx context.Context, filePath, body string, opts UploadOptions) (*UploadResult, error) {
+	// dryrun 承诺只读；新建文档没有远端基准可 diff，直接拒绝以免误建真实文档
+	if opts.DryRun {
+		return nil, fmt.Errorf("dryrun 仅支持更新已有文档：frontmatter 缺少 source 且未指定 --source")
+	}
+
 	spaceID := opts.SpaceID
 	if spaceID == "" {
 		spaceID = "my_library"

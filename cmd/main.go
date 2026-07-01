@@ -144,8 +144,9 @@ func newRootCommand() *cli.Command {
 					&cli.StringFlag{Name: "source", Usage: "Target Feishu document URL (mutually exclusive with --space/--parent)"},
 					&cli.StringFlag{Name: "space", Aliases: []string{"s"}, Usage: "Wiki space ID (optional, defaults to My Document Library)"},
 					&cli.StringFlag{Name: "parent", Aliases: []string{"p"}, Usage: "Parent node token (optional, for specifying location)"},
-					&cli.BoolFlag{Name: "incremental", Aliases: []string{"incr"}, Usage: "Incremental update (only modify changed blocks)"},
-					&cli.BoolFlag{Name: "dryrun", Usage: "Show what incremental update would do without making changes (requires --incr)"},
+					&cli.BoolFlag{Name: "incremental", Aliases: []string{"incr"}, Hidden: true, Usage: "Incremental update (default behavior; kept for backward compatibility)"},
+					&cli.BoolFlag{Name: "full", Usage: "Full update (delete all remote blocks and re-upload) instead of the default incremental update"},
+					&cli.BoolFlag{Name: "dryrun", Usage: "Show what incremental update would do without making changes (incompatible with --full)"},
 					&cli.BoolFlag{Name: "verbose", Aliases: []string{"v"}, Usage: "Show all blocks including unchanged ones (used with --dryrun)"},
 				},
 				Action: func(ctx context.Context, cmd *cli.Command) error {
@@ -155,14 +156,17 @@ func newRootCommand() *cli.Command {
 					uploadOpts.source = cmd.String("source")
 					uploadOpts.spaceID = cmd.String("space")
 					uploadOpts.parentNodeToken = cmd.String("parent")
-					uploadOpts.incremental = cmd.Bool("incremental")
+					if cmd.Bool("full") && cmd.Bool("incremental") {
+						return cli.Exit("--full cannot be used with --incremental/--incr", 1)
+					}
+					uploadOpts.incremental = !cmd.Bool("full")
 					uploadOpts.dryRun = cmd.Bool("dryrun")
 					uploadOpts.verbose = cmd.Bool("verbose")
 					if uploadOpts.source != "" && (uploadOpts.spaceID != "" || uploadOpts.parentNodeToken != "") {
 						return cli.Exit("--source cannot be used with --space or --parent", 1)
 					}
 					if uploadOpts.dryRun && !uploadOpts.incremental {
-						return cli.Exit("--dryrun requires --incremental/--incr", 1)
+						return cli.Exit("--dryrun cannot be used with --full", 1)
 					}
 					return handleUploadCommand(cmd.Args().First())
 				},

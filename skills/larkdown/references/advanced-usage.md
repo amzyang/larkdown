@@ -76,7 +76,7 @@ Token 选择优先级：
 
 ## 增量更新详解
 
-`larkdown ul --incr` 的工作原理：
+`larkdown ul` 更新已有文档时默认走增量更新（`--full` 可切换为全量重建），其工作原理：
 
 1. 获取远端现有 block
 2. 将本地 Markdown 转换为 docx block
@@ -120,4 +120,4 @@ larkdown 会自动刷新 token。如果刷新失败，重新运行 `larkdown log
 
 ### 上传后文档格式异常
 
-增量更新（`--incr`）可以减少格式问题。全量更新会删除所有 block 重建，可能丢失无法从 Markdown 表达的格式。
+默认的增量更新可以减少格式问题。全量更新（`--full`）会删除所有 block 重建，可能丢失无法从 Markdown 表达的格式。

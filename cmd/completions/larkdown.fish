@@ -61,9 +61,8 @@ for _cmd in upload ul
     complete -c larkdown -f -n "__fish_larkdown_using_command $_cmd" -l source            -d 'Target Feishu document URL (mutually exclusive with --space/--parent)'
     complete -c larkdown -f -n "__fish_larkdown_using_command $_cmd" -l space   -s s     -d 'Wiki space ID (optional, defaults to My Document Library)'
     complete -c larkdown -f -n "__fish_larkdown_using_command $_cmd" -l parent  -s p     -d 'Parent node token (optional, for specifying location)'
-    complete -c larkdown -f -n "__fish_larkdown_using_command $_cmd" -l incremental      -d 'Incremental update (only modify changed blocks)'
-    complete -c larkdown -f -n "__fish_larkdown_using_command $_cmd" -l incr             -d 'Incremental update (only modify changed blocks)'
-    complete -c larkdown -f -n "__fish_larkdown_using_command $_cmd" -l dryrun           -d 'Show what incremental update would do without making changes'
+    complete -c larkdown -f -n "__fish_larkdown_using_command $_cmd" -l full             -d 'Full update (delete all remote blocks and re-upload) instead of the default incremental update'
+    complete -c larkdown -f -n "__fish_larkdown_using_command $_cmd" -l dryrun           -d 'Show what incremental update would do without making changes (incompatible with --full)'
     complete -c larkdown -f -n "__fish_larkdown_using_command $_cmd" -l verbose -s v     -d 'Show all blocks including unchanged ones (use with --dryrun)'
 end
 
