@@ -108,6 +108,7 @@ func newRootCommand() *cli.Command {
 					&cli.BoolFlag{Name: "index", Usage: "Generate llms.txt and docs_map.md index files"},
 					&cli.BoolFlag{Name: "comments", Aliases: []string{"c"}, Value: true, Usage: "Include document comments in the exported Markdown"},
 					&cli.BoolFlag{Name: "no-diff", Usage: "Disable diff output when downloading"},
+					&cli.BoolFlag{Name: "force", Aliases: []string{"f"}, Usage: "Force re-download even if the remote document is unchanged"},
 				},
 				ArgsUsage: "<url>",
 				Action: func(ctx context.Context, cmd *cli.Command) error {
@@ -119,6 +120,7 @@ func newRootCommand() *cli.Command {
 					dlOpts.generateIndex = cmd.Bool("index")
 					dlOpts.comments = cmd.Bool("comments")
 					dlOpts.noDiff = cmd.Bool("no-diff")
+					dlOpts.force = cmd.Bool("force")
 
 					url := cmd.Args().First()
 					return handleDownloadCommand(url)

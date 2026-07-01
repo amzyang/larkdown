@@ -21,6 +21,7 @@ type DownloadOpts struct {
 	generateIndex bool
 	comments      bool
 	noDiff        bool
+	force         bool // 忽略本地版本标记，强制重新下载
 }
 
 var dlOpts = DownloadOpts{}
@@ -78,6 +79,20 @@ func downloadDocument(ctx context.Context, client *core.Client, url string, opts
 		// 继续原有的 docx 处理逻辑
 	default:
 		return nil, errors.Errorf("不支持的文档类型: %s", docType)
+	}
+
+	// 跳过未变化文档：本地已有带版本标记的下载产物，且远程版本一致 → 免拉取块与素材。
+	// 仅当本地候选存在时才多打一次轻量 GetDocxDocument；全新下载零额外 API 调用。
+	if !opts.force {
+		localPath, localFM, localBody := core.FindLocalFileByToken(opts.outputDir, urlToken, nodeTitle, dlConfig.Output)
+		if localFM != nil && localFM.Version != "" {
+			if doc, err := client.GetDocxDocument(ctx, docToken); err == nil &&
+				core.DownloadVersion(objEditTime, doc.RevisionID) == localFM.Version {
+				fmt.Printf("未变化，跳过: %s\n", localPath)
+				meta := core.LocalDocMeta(localPath, localBody)
+				return &meta, nil
+			}
+		}
 	}
 
 	// Process the download (docx type)
@@ -148,8 +163,14 @@ func downloadDocument(ctx context.Context, client *core.Client, url string, opts
 	}
 
 	// Add Front Matter (appended at file end)
+	// 版本标记用于下次下载跳过未变化文档；素材下载不完整时不落标记，保证下次重试
+	version := core.DownloadVersion(objEditTime, docx.RevisionID)
+	if len(failedAssets) > 0 {
+		version = ""
+	}
 	frontMatter := core.GenerateFrontMatter(core.FrontMatter{
-		Source: url,
+		Source:  url,
+		Version: version,
 	})
 	markdown = strings.TrimRight(markdown, "\n") + "\n" + frontMatter
 
@@ -225,7 +246,7 @@ func downloadDocuments(ctx context.Context, client *core.Client, url string) err
 		if err != nil {
 			return err
 		}
-		opts := DownloadOpts{outputDir: folderPath, comments: dlOpts.comments, noDiff: dlOpts.noDiff}
+		opts := DownloadOpts{outputDir: folderPath, comments: dlOpts.comments, noDiff: dlOpts.noDiff, force: dlOpts.force}
 		for _, file := range files {
 			if file.Type == "folder" {
 				_folderPath := filepath.Join(folderPath, file.Name)
@@ -311,7 +332,7 @@ func downloadWikiNodeRecursive(ctx context.Context, client *core.Client,
 			}
 			switch n.ObjType {
 			case "docx":
-				opts := DownloadOpts{outputDir: folderPath, comments: dlOpts.comments, noDiff: dlOpts.noDiff}
+				opts := DownloadOpts{outputDir: folderPath, comments: dlOpts.comments, noDiff: dlOpts.noDiff, force: dlOpts.force}
 				wg.Add(1)
 				semaphore <- struct{}{}
 				go func(_url string, _folderPath string) {
@@ -499,7 +520,7 @@ func handleDownloadCommand(url string) error {
 			}
 
 			// 先下载根节点自身（不递归）
-			rootOpts := DownloadOpts{outputDir: dlOpts.outputDir, comments: dlOpts.comments, noDiff: dlOpts.noDiff}
+			rootOpts := DownloadOpts{outputDir: dlOpts.outputDir, comments: dlOpts.comments, noDiff: dlOpts.noDiff, force: dlOpts.force}
 			meta, rootErr := downloadDocument(ctx, client, url, &rootOpts)
 			if rootErr != nil {
 				log.Printf("警告: 根节点下载失败，继续下载子节点: %v", rootErr)

@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -247,6 +248,21 @@ func WriteDocsIndex(idx *DocsIndex, outputDir string) error {
 // FrontMatter 文档的 YAML frontmatter 元数据
 type FrontMatter struct {
 	Source string `yaml:"source"`
+	// Version 下载时的远程版本标记（见 DownloadVersion），用于重复下载时跳过未变化文档。
+	// 上传写回时原样保留：上传会推高远程版本，旧标记自然失配、触发下次重新下载。
+	Version string `yaml:"version,omitempty"`
+}
+
+// DownloadVersion 组合文档下载版本标记。revision_id 随内容编辑与评论变化，
+// 但白板编辑不更新它；Wiki 节点的 obj_edit_time 随白板编辑变化，故两者拼接，
+// 任一变化都触发重新下载。非 Wiki 文档无 obj_edit_time，仅用 revision_id
+// （已知限制：纯白板编辑不会被感知，可用 download --force 强制刷新）。
+func DownloadVersion(objEditTime string, revisionID int64) string {
+	rev := strconv.FormatInt(revisionID, 10)
+	if objEditTime == "" {
+		return rev
+	}
+	return objEditTime + "." + rev
 }
 
 // GenerateFrontMatter 生成 HTML 注释格式的 frontmatter（放在文件末尾）
@@ -378,6 +394,92 @@ func FindStaleFile(outputDir, newFilename, urlToken string) (string, error) {
 		}
 	}
 	return "", nil
+}
+
+// FindLocalFileByToken 在 outputDir 中查找 frontmatter source token 与 urlToken 匹配的 md 文件，
+// 返回 (文件路径, frontmatter, 正文)；未找到返回零值。
+// 优先直接探测候选文件名（token 命名 / 已知标题命名），避免大目录下逐一扫描；
+// 候选未命中时回退全目录扫描（覆盖 TitleAsFilename 下标题未知的情况）。
+func FindLocalFileByToken(outputDir, urlToken, knownTitle string, config OutputConfig) (string, *FrontMatter, string) {
+	tryPath := func(path string) (*FrontMatter, string) {
+		content, err := os.ReadFile(path)
+		if err != nil {
+			return nil, ""
+		}
+		fm, body, err := ParseFrontMatter(string(content))
+		if err != nil || fm == nil || ExtractTokenFromURL(fm.Source) != urlToken {
+			return nil, ""
+		}
+		return fm, body
+	}
+
+	// 快路径：按当前配置推算的文件名 + token 文件名
+	candidates := []string{ComputeMdFilename(knownTitle, urlToken, config), urlToken + ".md"}
+	for i, name := range candidates {
+		if i == 1 && name == candidates[0] {
+			continue
+		}
+		path := filepath.Join(outputDir, name)
+		if fm, body := tryPath(path); fm != nil {
+			return path, fm, body
+		}
+	}
+
+	// 慢路径：全目录扫描（如配置变更导致文件名与推算不符）
+	matches, err := filepath.Glob(filepath.Join(outputDir, "*.md"))
+	if err != nil {
+		return "", nil, ""
+	}
+	for _, path := range matches {
+		if fm, body := tryPath(path); fm != nil {
+			return path, fm, body
+		}
+	}
+	return "", nil, ""
+}
+
+// ExtractHeadingsFromMarkdown 从 markdown 正文提取扁平 ATX 标题列表（跳过代码围栏内的 #）。
+// 标题文本保留行内 markdown 格式（与 parser 的纯文本口径略有差异，仅用于索引展示）。
+func ExtractHeadingsFromMarkdown(body string) []Heading {
+	var headings []Heading
+	inFence := false
+	for _, line := range strings.Split(body, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "```") || strings.HasPrefix(trimmed, "~~~") {
+			inFence = !inFence
+			continue
+		}
+		if inFence || !strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		level := 0
+		for level < len(trimmed) && trimmed[level] == '#' {
+			level++
+		}
+		if level > 6 || level >= len(trimmed) || trimmed[level] != ' ' {
+			continue
+		}
+		if text := strings.TrimSpace(trimmed[level+1:]); text != "" {
+			headings = append(headings, Heading{Level: level, Text: text})
+		}
+	}
+	return headings
+}
+
+// commentsAppendixMarker 下载时 RenderComments 追加的评论附录分隔符。
+const commentsAppendixMarker = "\n---\n\n## 评论\n"
+
+// LocalDocMeta 从本地已下载的 markdown 文件重建 DocMeta（跳过未变化文档时索引生成需要）。
+// 标题取正文首个 H1（即文档标题行）；标题结构剔除标题行与评论附录，对齐新鲜下载的口径。
+func LocalDocMeta(path, body string) DocMeta {
+	if idx := strings.Index(body, commentsAppendixMarker); idx >= 0 {
+		body = body[:idx]
+	}
+	return DocMeta{
+		Title:    ExtractTitle(body),
+		RelPath:  filepath.Base(path),
+		Headings: BuildHeadingTree(ExtractHeadingsFromMarkdown(RemoveFirstHeading(body))),
+	}
 }
 
 // ExtractTokenFromURL 从飞书 URL 中提取文档 token

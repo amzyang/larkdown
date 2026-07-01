@@ -49,6 +49,7 @@ for _cmd in download dl
     complete -c larkdown -f -n "__fish_larkdown_using_command $_cmd" -l index          -d 'Generate llms.txt and docs_map.md index files'
     complete -c larkdown -f -n "__fish_larkdown_using_command $_cmd" -l comments  -s c -d 'Include document comments in the exported Markdown'
     complete -c larkdown -f -n "__fish_larkdown_using_command $_cmd" -l no-diff        -d 'Disable diff output when downloading'
+    complete -c larkdown -f -n "__fish_larkdown_using_command $_cmd" -l force     -s f -d 'Force re-download even if the remote document is unchanged'
 end
 
 # login flags
