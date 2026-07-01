@@ -535,7 +535,7 @@ func (u *Uploader) incrementalUpdate(ctx context.Context, documentID, filePath, 
 
 	// dryrun: 输出报告并返回，不执行任何写操作
 	if dryRun {
-		printDryRunReport(ops, regions, rootBlocks, localResult, batchRequests, imageReplaces, fileReplaces, docsAIReplaces, docsAIEnabled, verbose)
+		printDryRunReport(ops, regions, rootBlocks, blockMap, localResult, batchRequests, imageReplaces, fileReplaces, docsAIReplaces, docsAIEnabled, verbose)
 		return nil
 	}
 
@@ -592,11 +592,14 @@ func (u *Uploader) incrementalUpdate(ctx context.Context, documentID, filePath, 
 	return nil
 }
 
-// printDryRunReport 输出 dryrun 诊断报告
+// printDryRunReport 输出 dryrun 诊断报告。
+// 报告与实际执行归一：执行时会被跳过的删除（空文本块、仍被引用的实体）
+// 按 classifyDeletion 单独标注与计数，不计入 Delete。
 func printDryRunReport(
 	ops []DiffOp,
 	regions []ChangeRegion,
 	rootBlocks []*lark.DocxBlock,
+	blockMap map[string]*lark.DocxBlock,
 	localResult *ConvertResult,
 	batchRequests []*lark.BatchUpdateDocxDocumentBlockReqRequest,
 	imageReplaces []imageReplaceTask,
@@ -605,6 +608,7 @@ func printDryRunReport(
 	docsAIEnabled bool,
 	verbose bool,
 ) {
+	localTokens := localEntityTokenSet(localResult)
 	// 统计未变化块数
 	unchanged := 0
 	for _, op := range ops {
@@ -622,9 +626,9 @@ func printDryRunReport(
 	fmt.Printf("变更区域: %d\n", len(regions))
 
 	if verbose {
-		printDryRunVerbose(ops, regions, rootBlocks, localResult, docsAIEnabled)
+		printDryRunVerbose(ops, regions, rootBlocks, blockMap, localResult, docsAIEnabled, localTokens)
 	} else {
-		printDryRunRegions(regions, rootBlocks, localResult, docsAIEnabled)
+		printDryRunRegions(regions, rootBlocks, blockMap, localResult, docsAIEnabled, localTokens)
 	}
 
 	// 媒体内容替换（签名 Equal 但内容已变 / 区域内跨块替换）：原地 replace_image/replace_file 保 block_id。
@@ -643,6 +647,7 @@ func printDryRunReport(
 	// Summary：image/file 替换统一以 imageReplaces/fileReplaces 计数（含「Equal 但内容变」与
 	// 「区域内替换」两类来源），区域循环只统计文本类替换，避免与媒体列表重复计数。
 	var totalDelete, totalInsert, totalDocsAI, textUpdates int
+	var skippedEmpty, preservedEntity int
 	for _, region := range regions {
 		for _, op := range PairBlocks(region, rootBlocks, localResult, docsAIEnabled) {
 			switch op.Type {
@@ -656,7 +661,15 @@ func printDryRunReport(
 			case PairedOpDocsAIReplace:
 				totalDocsAI++
 			case PairedOpDelete:
-				totalDelete++
+				// 与 collectDeletions 同口径：执行时会被跳过的删除不计入 Delete
+				switch classifyDeletion(rootBlocks[op.RemoteIdx], blockMap, localTokens) {
+				case deletionSkipEmpty:
+					skippedEmpty++
+				case deletionPreserveEntity:
+					preservedEntity++
+				default:
+					totalDelete++
+				}
 			case PairedOpInsert:
 				totalInsert++
 			}
@@ -672,20 +685,26 @@ func printDryRunReport(
 	fmt.Printf("Delete:  %d\n", totalDelete)
 	fmt.Printf("Insert:  %d\n", totalInsert)
 	fmt.Printf("Unchanged: %d\n", unchanged)
+	if skippedEmpty > 0 {
+		fmt.Printf("Skip-Delete: %d (空文本块，执行时跳过删除)\n", skippedEmpty)
+	}
+	if preservedEntity > 0 {
+		fmt.Printf("Preserve: %d (实体仍被引用，执行时保留并校正位置)\n", preservedEntity)
+	}
 }
 
 // printDryRunRegions 按变更区域输出（默认模式）
-func printDryRunRegions(regions []ChangeRegion, rootBlocks []*lark.DocxBlock, localResult *ConvertResult, docsAIEnabled bool) {
+func printDryRunRegions(regions []ChangeRegion, rootBlocks []*lark.DocxBlock, blockMap map[string]*lark.DocxBlock, localResult *ConvertResult, docsAIEnabled bool, localTokens map[string]bool) {
 	for i, region := range regions {
 		fmt.Printf("\n--- 区域 %d (远程位置: %d) ---\n", i+1, region.RemoteStartIndex)
 		for _, op := range PairBlocks(region, rootBlocks, localResult, docsAIEnabled) {
-			printPairedOp(op, rootBlocks, localResult)
+			printPairedOp(op, rootBlocks, blockMap, localResult, localTokens)
 		}
 	}
 }
 
 // printDryRunVerbose 按文档顺序输出所有块（verbose 模式）
-func printDryRunVerbose(ops []DiffOp, regions []ChangeRegion, rootBlocks []*lark.DocxBlock, localResult *ConvertResult, docsAIEnabled bool) {
+func printDryRunVerbose(ops []DiffOp, regions []ChangeRegion, rootBlocks []*lark.DocxBlock, blockMap map[string]*lark.DocxBlock, localResult *ConvertResult, docsAIEnabled bool, localTokens map[string]bool) {
 	// 构建 remoteIdx → region 的查找表
 	type regionEntry struct {
 		regionIdx int
@@ -722,7 +741,7 @@ func printDryRunVerbose(ops []DiffOp, regions []ChangeRegion, rootBlocks []*lark
 				if !printed[key] {
 					printed[key] = true
 					for _, pop := range entry.pairedOps {
-						printPairedOp(pop, rootBlocks, localResult)
+						printPairedOp(pop, rootBlocks, blockMap, localResult, localTokens)
 					}
 				}
 			}
@@ -733,7 +752,7 @@ func printDryRunVerbose(ops []DiffOp, regions []ChangeRegion, rootBlocks []*lark
 				if !printed[key] {
 					printed[key] = true
 					for _, pop := range entry.pairedOps {
-						printPairedOp(pop, rootBlocks, localResult)
+						printPairedOp(pop, rootBlocks, blockMap, localResult, localTokens)
 					}
 				}
 			}
@@ -742,7 +761,7 @@ func printDryRunVerbose(ops []DiffOp, regions []ChangeRegion, rootBlocks []*lark
 }
 
 // printPairedOp 输出单个配对操作
-func printPairedOp(op PairedOp, rootBlocks []*lark.DocxBlock, localResult *ConvertResult) {
+func printPairedOp(op PairedOp, rootBlocks []*lark.DocxBlock, blockMap map[string]*lark.DocxBlock, localResult *ConvertResult, localTokens map[string]bool) {
 	switch op.Type {
 	case PairedOpReplace:
 		remote := rootBlocks[op.RemoteIdx]
@@ -781,8 +800,17 @@ func printPairedOp(op PairedOp, rootBlocks []*lark.DocxBlock, localResult *Conve
 
 	case PairedOpDelete:
 		remote := rootBlocks[op.RemoteIdx]
-		fmt.Printf("  DELETE   [%d] %s  block_id=%s\n",
-			op.RemoteIdx, blockTypeName(remote.BlockType), remote.BlockID)
+		switch classifyDeletion(remote, blockMap, localTokens) {
+		case deletionSkipEmpty:
+			fmt.Printf("  SKIP-DEL [%d] %s  block_id=%s  (空文本块，执行时跳过删除)\n",
+				op.RemoteIdx, blockTypeName(remote.BlockType), remote.BlockID)
+		case deletionPreserveEntity:
+			fmt.Printf("  PRESERVE [%d] %s  block_id=%s  (实体仍被引用，执行时保留并校正位置)\n",
+				op.RemoteIdx, blockTypeName(remote.BlockType), remote.BlockID)
+		default:
+			fmt.Printf("  DELETE   [%d] %s  block_id=%s\n",
+				op.RemoteIdx, blockTypeName(remote.BlockType), remote.BlockID)
+		}
 		if preview := blockTextPreview(remote, 60); preview != "" {
 			fmt.Printf("    : %q\n", preview)
 		}
@@ -1106,15 +1134,33 @@ func collectDeletions(pairedOps []PairedOp, rootBlocks []*lark.DocxBlock, blockM
 			continue
 		}
 		rb := rootBlocks[op.RemoteIdx]
-		if tok := preservableEntityToken(rb, blockMap); tok != "" && localTokens[tok] {
-			continue // 实体仍在 markdown（重排而非删除）：保留
-		}
-		if isEmptyTextBlock(rb) {
+		if classifyDeletion(rb, blockMap, localTokens) != deletionExecute {
 			continue
 		}
 		deleteBlockIDs = append(deleteBlockIDs, rb.BlockID)
 	}
 	return deleteBlockIDs
+}
+
+// deletionAction 描述 PairedOpDelete 在真实执行时的动作。
+// collectDeletions（执行）与 printDryRunReport（dryrun 报告）共用，保证 dryrun 与实际执行归一。
+type deletionAction int
+
+const (
+	deletionExecute        deletionAction = iota // 真实删除
+	deletionPreserveEntity                       // 实体仍被 markdown 引用（重排而非删除）：保留，仅位置校正
+	deletionSkipEmpty                            // 空文本块：跳过删除，等效 no-op
+)
+
+// classifyDeletion 判定一个待删除的远程块在执行时的真实动作。
+func classifyDeletion(rb *lark.DocxBlock, blockMap map[string]*lark.DocxBlock, localTokens map[string]bool) deletionAction {
+	if tok := preservableEntityToken(rb, blockMap); tok != "" && localTokens[tok] {
+		return deletionPreserveEntity
+	}
+	if isEmptyTextBlock(rb) {
+		return deletionSkipEmpty
+	}
+	return deletionExecute
 }
 
 // executeDeleteInsert 执行单个变更区域的删除和插入操作
