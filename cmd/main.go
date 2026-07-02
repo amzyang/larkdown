@@ -105,7 +105,6 @@ func newRootCommand() *cli.Command {
 				Flags: []cli.Flag{
 					&cli.StringFlag{Name: "output", Aliases: []string{"o"}, Value: "./", Usage: "Specify the output directory for the markdown files"},
 					&cli.BoolFlag{Name: "recursive", Aliases: []string{"r"}, Usage: "Recursively download all child nodes of a wiki node"},
-					&cli.BoolFlag{Name: "index", Usage: "Generate llms.txt and docs_map.md index files"},
 					&cli.BoolFlag{Name: "comments", Aliases: []string{"c"}, Value: true, Usage: "Include document comments in the exported Markdown"},
 					&cli.BoolFlag{Name: "no-diff", Usage: "Disable diff output when downloading"},
 					&cli.BoolFlag{Name: "force", Aliases: []string{"f"}, Usage: "Force re-download even if the remote document is unchanged"},
@@ -117,7 +116,6 @@ func newRootCommand() *cli.Command {
 					}
 					dlOpts.outputDir = cmd.String("output")
 					dlOpts.recursive = cmd.Bool("recursive")
-					dlOpts.generateIndex = cmd.Bool("index")
 					dlOpts.comments = cmd.Bool("comments")
 					dlOpts.noDiff = cmd.Bool("no-diff")
 					dlOpts.force = cmd.Bool("force")

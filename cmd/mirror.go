@@ -89,14 +89,13 @@ func handleMirrorCommand(urlArg string) error {
 			filepath.Join(outputDir, core.MirrorManifestFilename), url)
 	}
 
-	// mirror 复用 download 的全局选项：固定递归 + 生成索引 + 关闭 diff 输出
+	// mirror 复用 download 的全局选项：固定递归 + 关闭 diff 输出（索引单独由各同步路径生成）
 	dlOpts = DownloadOpts{
-		outputDir:     outputDir,
-		recursive:     true,
-		generateIndex: true,
-		comments:      mirrorOpts.comments,
-		noDiff:        true,
-		force:         mirrorOpts.force,
+		outputDir: outputDir,
+		recursive: true,
+		comments:  mirrorOpts.comments,
+		noDiff:    true,
+		force:     mirrorOpts.force,
 	}
 
 	ctx := context.Background()
@@ -114,7 +113,7 @@ func handleMirrorCommand(urlArg string) error {
 	switch parsed.Type {
 	case utils.UrlTypeFolder:
 		rootName = filepath.Base(outputDir)
-		syncErr = downloadDocuments(ctx, client, url, seen)
+		syncErr = downloadDocuments(ctx, client, url, seen, true)
 
 	case utils.UrlTypeWikiSettings:
 		rootName, syncErr = mirrorWikiSpace(ctx, client, parsed.PrefixURL, parsed.Token, seen)

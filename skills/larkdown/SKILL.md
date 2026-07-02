@@ -42,9 +42,6 @@ larkdown dl "https://example.feishu.cn/wiki/xxx" -r -o /tmp/feishu-output
 # 递归下载文件夹
 larkdown dl "https://example.feishu.cn/drive/folder/xxx" -r -o /tmp/feishu-output
 
-# 生成索引文件（llms.txt + docs_map.md）
-larkdown dl "https://example.feishu.cn/wiki/xxx" -r --index -o /tmp/feishu-output
-
 # 重新下载已有文件（从 frontmatter 的 source 字段读取 URL）
 larkdown dl /path/to/existing.md
 ```
@@ -97,7 +94,6 @@ larkdown 根据 URL 路径自动识别类型，不需要额外 flag：
 | `<url>`           | 飞书 URL 或本地 .md 文件路径（必需）                        | -      |
 | `-o, --output`    | 输出目录                                                    | `./`   |
 | `-r, --recursive` | 递归下载子节点                                              | false  |
-| `--index`         | 生成 llms.txt 和 docs_map.md 索引                           | false  |
 | `-c, --comments`  | 包含文档评论                                                | true   |
 | `--no-diff`       | 禁用变更 diff 输出（默认下载时会显示与本地已有文件的 diff） | false  |
 
@@ -105,7 +101,7 @@ larkdown 根据 URL 路径自动识别类型，不需要额外 flag：
 
 ### mirror
 
-把知识库空间、Wiki 子树或云文档文件夹**单向只下载同步**为本地镜像目录，适合喂给 AI Agent 或做本地知识库快照。与 `dl -r --index` 的区别：输出目录本身即镜像根（不嵌套知识库名子目录）、固定生成索引与 `CLAUDE.md` 说明、同步后清理远端已删除的本地文档（移入回收站）。
+把知识库空间、Wiki 子树或云文档文件夹**单向只下载同步**为本地镜像目录，适合喂给 AI Agent 或做本地知识库快照。与 `dl -r` 的区别：输出目录本身即镜像根（不嵌套知识库名子目录）、固定生成索引（llms.txt / docs_map.md）与 `CLAUDE.md` 说明、同步后清理远端已删除的本地文档（移入回收站）。
 
 | 参数             | 说明                                                       | 默认值 |
 | ---------------- | ---------------------------------------------------------- | ------ |

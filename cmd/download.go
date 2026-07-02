@@ -16,12 +16,11 @@ import (
 )
 
 type DownloadOpts struct {
-	outputDir     string
-	recursive     bool
-	generateIndex bool
-	comments      bool
-	noDiff        bool
-	force         bool // 忽略本地版本标记，强制重新下载
+	outputDir string
+	recursive bool
+	comments  bool
+	noDiff    bool
+	force     bool // 忽略本地版本标记，强制重新下载
 }
 
 var dlOpts = DownloadOpts{}
@@ -254,7 +253,8 @@ func recordDownloadVersion(documentID, outputPath, version string) {
 }
 
 // downloadDocuments 递归下载文件夹。seen 非 nil 时收集远端存在的文档 token（mirror 清理用）。
-func downloadDocuments(ctx context.Context, client *core.Client, url string, seen *tokenSet) error {
+// generateIndex 为 true 时生成 llms.txt / docs_map.md 索引（仅 mirror 使用）。
+func downloadDocuments(ctx context.Context, client *core.Client, url string, seen *tokenSet, generateIndex bool) error {
 	// Validate the url to download
 	folderToken, err := utils.ValidateFolderURL(url)
 	if err != nil {
@@ -265,7 +265,7 @@ func downloadDocuments(ctx context.Context, client *core.Client, url string, see
 	// 初始化索引收集器
 	var docsIndex *core.DocsIndex
 	var mu sync.Mutex
-	if dlOpts.generateIndex {
+	if generateIndex {
 		docsIndex = core.NewDocsIndex(filepath.Base(dlOpts.outputDir), dlOpts.outputDir)
 	}
 
@@ -453,21 +453,9 @@ func downloadWiki(ctx context.Context, client *core.Client, url string) error {
 	}
 
 	sanitizedWikiName := utils.SanitizeFileName(wikiName)
-	outputDir := filepath.Join(dlOpts.outputDir, sanitizedWikiName)
 
-	var docsIndex *core.DocsIndex
-	if dlOpts.generateIndex {
-		docsIndex = core.NewDocsIndex(sanitizedWikiName, sanitizedWikiName)
-	}
-
-	err = downloadWikiNodeRecursive(ctx, client, prefixURL, spaceID, sanitizedWikiName, dlOpts.outputDir, nil, docsIndex, nil)
-
-	if docsIndex != nil {
-		if err := core.WriteDocsIndex(docsIndex, outputDir); err != nil {
-			return err
-		}
-	}
-
+	// download 命令忽略部分同步失败（内部已逐条告警），始终返回 nil
+	downloadWikiNodeRecursive(ctx, client, prefixURL, spaceID, sanitizedWikiName, dlOpts.outputDir, nil, nil, nil)
 	return nil
 }
 
@@ -516,7 +504,7 @@ func handleDownloadCommand(url string) error {
 		if !dlOpts.recursive {
 			return fmt.Errorf("下载文件夹需要指定 -r 选项")
 		}
-		return downloadDocuments(ctx, client, url, nil)
+		return downloadDocuments(ctx, client, url, nil, false)
 
 	case utils.UrlTypeWikiSettings:
 		if !dlOpts.recursive {
@@ -550,28 +538,15 @@ func handleDownloadCommand(url string) error {
 		// 是 node_token
 		if dlOpts.recursive && node.HasChild {
 			displayName := nodeDisplayName(node.Title, node.NodeToken)
-			outputDir := filepath.Join(dlOpts.outputDir, displayName)
-			var docsIndex *core.DocsIndex
-			if dlOpts.generateIndex {
-				docsIndex = core.NewDocsIndex(displayName, outputDir)
-			}
 
 			// 先下载根节点自身（不递归）
 			rootOpts := DownloadOpts{outputDir: dlOpts.outputDir, comments: dlOpts.comments, noDiff: dlOpts.noDiff, force: dlOpts.force}
-			meta, rootErr := downloadDocument(ctx, client, url, &rootOpts)
-			if rootErr != nil {
+			if _, rootErr := downloadDocument(ctx, client, url, &rootOpts); rootErr != nil {
 				log.Printf("警告: 根节点下载失败，继续下载子节点: %v", rootErr)
-			} else if meta != nil && docsIndex != nil {
-				docsIndex.AddDoc(*meta, dlOpts.outputDir)
 			}
 
 			// 递归下载子节点
-			downloadWikiNodeRecursive(ctx, client, parsed.PrefixURL, spaceID, displayName, dlOpts.outputDir, &node.NodeToken, docsIndex, nil)
-			if docsIndex != nil {
-				if writeErr := core.WriteDocsIndex(docsIndex, outputDir); writeErr != nil {
-					return writeErr
-				}
-			}
+			downloadWikiNodeRecursive(ctx, client, parsed.PrefixURL, spaceID, displayName, dlOpts.outputDir, &node.NodeToken, nil, nil)
 			return nil
 		}
 

@@ -107,7 +107,6 @@ larkdown auth logout         # 撤销并清除本地 user_access_token
 | ------------- | ---- | ------ | ------------------------------------- |
 | `--output`    | `-o` | `./`   | 输出目录                              |
 | `--recursive` | `-r` | false  | 递归下载子节点                        |
-| `--index`     | -    | false  | 生成 llms.txt 和 docs_map.md 索引文件 |
 | `--comments`  | `-c` | true   | 包含文档评论                          |
 | `--no-diff`   | -    | false  | 下载时不显示 diff 输出                |
 
@@ -125,7 +124,7 @@ larkdown mirror https://xxx.feishu.cn/wiki/space/123456 -o ./my-wiki
 cd my-wiki && larkdown mirror
 ```
 
-与 `download -r --index` 的区别：
+与 `download -r` 的区别：
 
 - 固定生成 `llms.txt`（扁平文档列表）和 `docs_map.md`（目录树 + 标题结构文档地图）
 - 生成 `CLAUDE.md`，向 Claude Code 等 Agent 说明镜像性质与索引文件用法
