@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"os/exec"
 	"runtime"
@@ -34,15 +36,19 @@ func handleLoginCommand() error {
 		port = core.DefaultOAuthPort
 	}
 
+	// state 用密码学随机数防 CSRF（crypto/rand.Read 从不返回错误）
+	stateBytes := make([]byte, 16)
+	rand.Read(stateBytes)
+	state := hex.EncodeToString(stateBytes)
+
 	oauthMgr := core.NewOAuthManager(config.Feishu.AppId, config.Feishu.AppSecret, port, globalOpts.clientOpts)
-	callbackServer := core.NewOAuthCallbackServer(port)
+	callbackServer := core.NewOAuthCallbackServer(port, state)
 
 	if err := callbackServer.Start(); err != nil {
 		return err
 	}
 	defer callbackServer.Shutdown(context.Background())
 
-	state := fmt.Sprintf("%d", time.Now().UnixNano())
 	authURL := oauthMgr.GetAuthURL(state)
 
 	fmt.Println("正在打开浏览器进行飞书授权...")

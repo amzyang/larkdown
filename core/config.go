@@ -70,6 +70,10 @@ func ReadConfigFromFile(configPath string) (*Config, error) {
 	if err != nil {
 		return nil, err
 	}
+	// 老用户的 config 可能以 0644 落盘：就地收紧到 0600（best-effort，失败不阻断读取）
+	if info, err := os.Stat(configPath); err == nil && info.Mode().Perm()&0o077 != 0 {
+		_ = os.Chmod(configPath, 0o600)
+	}
 	config := NewConfig("", "")
 	if err := json.Unmarshal(data, &config); err != nil {
 		return nil, err
@@ -86,6 +90,7 @@ func (conf *Config) WriteConfig2File(configPath string) error {
 	if err != nil {
 		return err
 	}
-	err = os.WriteFile(configPath, file, 0o644)
+	// config.json 含 app_secret / token，仅属主可读写
+	err = os.WriteFile(configPath, file, 0o600)
 	return err
 }

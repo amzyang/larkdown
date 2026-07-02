@@ -97,18 +97,20 @@ func (m *OAuthManager) RefreshUserToken(ctx context.Context, refreshToken string
 
 // OAuthCallbackServer 本地回调服务器
 type OAuthCallbackServer struct {
-	port     int
-	codeChan chan string
-	errChan  chan error
-	server   *http.Server
+	port          int
+	expectedState string
+	codeChan      chan string
+	errChan       chan error
+	server        *http.Server
 }
 
-// NewOAuthCallbackServer 创建回调服务器
-func NewOAuthCallbackServer(port int) *OAuthCallbackServer {
+// NewOAuthCallbackServer 创建回调服务器，expectedState 用于校验回调防 CSRF
+func NewOAuthCallbackServer(port int, expectedState string) *OAuthCallbackServer {
 	return &OAuthCallbackServer{
-		port:     port,
-		codeChan: make(chan string, 1),
-		errChan:  make(chan error, 1),
+		port:          port,
+		expectedState: expectedState,
+		codeChan:      make(chan string, 1),
+		errChan:       make(chan error, 1),
 	}
 }
 
@@ -117,8 +119,9 @@ func (s *OAuthCallbackServer) Start() error {
 	mux := http.NewServeMux()
 	mux.HandleFunc(DefaultRedirectPath, s.handleCallback)
 
+	// 只绑 loopback，不暴露到 0.0.0.0（redirect URI 仍是 http://localhost:<port>/callback）
 	s.server = &http.Server{
-		Addr:    fmt.Sprintf(":%d", s.port),
+		Addr:    fmt.Sprintf("localhost:%d", s.port),
 		Handler: mux,
 	}
 
@@ -138,14 +141,25 @@ func (s *OAuthCallbackServer) Start() error {
 
 // handleCallback 处理 OAuth 回调
 func (s *OAuthCallbackServer) handleCallback(w http.ResponseWriter, r *http.Request) {
-	code := r.URL.Query().Get("code")
-	if code == "" {
-		errMsg := r.URL.Query().Get("error")
-		if errMsg == "" {
-			errMsg = "未知错误"
-		}
+	query := r.URL.Query()
+
+	// state 不匹配：CSRF 或本地垃圾请求，拒绝但不打断等待（继续等正确回调直到超时）
+	if query.Get("state") != s.expectedState {
+		http.Error(w, "state 校验失败", http.StatusBadRequest)
+		return
+	}
+
+	// 有 error 参数：飞书用户拒绝授权的真实回调，才打断等待
+	if errMsg := query.Get("error"); errMsg != "" {
 		http.Error(w, "授权失败: "+errMsg, http.StatusBadRequest)
 		s.errChan <- fmt.Errorf("授权失败: %s", errMsg)
+		return
+	}
+
+	code := query.Get("code")
+	if code == "" {
+		// 无 code 无 error：浏览器预取等噪声请求，不打断等待
+		http.Error(w, "无效的回调请求", http.StatusBadRequest)
 		return
 	}
 
