@@ -33,6 +33,7 @@ make clean          # 删除构建产物
 **下载**：飞书 API → `client.go` 获取 DocxBlock JSON → `parser.go` 转换为 Markdown → 写入文件
 **上传**：Markdown 文件 → `md2blocks.go` (goldmark AST) 转换为 DocxBlock → `uploader.go` 调用飞书 API 创建/更新文档
 **增量更新**：`diff.go` 基于块签名（SHA-256）做 LCS diff，仅修改变化的块
+**镜像**：`mirror` 单向只下载同步知识库/文件夹（`cmd/mirror.go` + `core/mirror.go`）——输出目录即镜像根（不嵌套 Wiki 名子目录），固定生成 llms.txt / docs_map.md 索引与面向 Agent 的 CLAUDE.md 说明，写入 `.larkdown-mirror.yaml` 记录来源（无参重同步）；同步后清理远端已删除的本地文档：按「远端 token 集合（遍历节点列表收集，与下载成败无关）vs 本地 `.md` frontmatter source token」判定，移入回收站；部分同步失败时跳过清理防误删
 
 ### 下载侧块分隔策略（parser）
 
@@ -81,8 +82,9 @@ make clean          # 删除构建产物
 
 ```
 cmd/           # CLI 入口 (urfave/cli v3)
-  main.go      # 命令注册（config, download, login, upload）
+  main.go      # 命令注册（config, download, mirror, login, upload）
   download.go  # download/dl 子命令：单文档、批量文件夹、Wiki 递归下载
+  mirror.go    # mirror 子命令：单向只下载同步为本地镜像目录（索引 + CLAUDE.md + 陈旧清理）
   upload.go    # upload 子命令：Markdown 上传/增量更新到飞书 Wiki（--source 指定目标文档）
 
 core/          # 核心业务逻辑
@@ -92,6 +94,7 @@ core/          # 核心业务逻辑
   diff.go      # 块级 diff 算法（LCS + SHA-256 签名），用于增量更新
   uploader.go  # Wiki 上传器：新建文档或增量更新（基于 frontmatter 判断）
   docmeta.go   # 文档元信息、目录索引（llms.txt / docs_map.md）、FrontMatter 解析
+  mirror.go    # 镜像支撑：.larkdown-mirror.yaml 边车、镜像 CLAUDE.md 生成、陈旧文档清理
   cache.go     # 图片缓存（~/.cache/feishu2md/images/）
   config.go    # 配置管理（~/.config/feishu2md/config.json）
   oauth.go     # OAuth 设备码流程（device flow）：申请设备码、轮询换 token、v2 刷新、token 撤销（纯裸 HTTP）

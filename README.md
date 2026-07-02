@@ -83,6 +83,7 @@ larkdown auth logout         # 撤销并清除本地 user_access_token
 | ---------- | ---- | ---------------------------------------- |
 | `config`   | -    | 读取或设置配置（AppID、AppSecret）       |
 | `download` | `dl` | 下载飞书文档为 Markdown                  |
+| `mirror`   | -    | 单向只下载同步知识库/文件夹为本地镜像目录 |
 | `upload`   | `ul` | 上传 Markdown 到飞书 Wiki                |
 | `publish`  | -    | 发布本地 HTML 文件/目录为飞书妙搭在线应用 |
 | `auth`     | -    | 认证管理：`login` / `status` / `logout`  |
@@ -111,6 +112,32 @@ larkdown auth logout         # 撤销并清除本地 user_access_token
 | `--no-diff`   | -    | false  | 下载时不显示 diff 输出                |
 
 > **提示**：download 命令也支持传入已下载的 `.md` 文件路径，会自动从 frontmatter 中提取源 URL 重新下载最新版本。
+
+#### mirror 命令
+
+把整个知识库（或知识库子树、云文档文件夹）**单向只下载同步**为本地镜像目录，适合喂给 AI Agent 或做本地知识库快照：
+
+```bash
+# 首次镜像：输出目录本身即镜像根（不会再嵌套一层知识库名子目录）
+larkdown mirror https://xxx.feishu.cn/wiki/space/123456 -o ./my-wiki
+
+# 重新同步：来源已记录在镜像目录的 .larkdown-mirror.yaml 中，无需再传 URL
+cd my-wiki && larkdown mirror
+```
+
+与 `download -r --index` 的区别：
+
+- 固定生成 `llms.txt`（扁平文档列表）和 `docs_map.md`（目录树 + 标题结构文档地图）
+- 生成 `CLAUDE.md`，向 Claude Code 等 Agent 说明镜像性质与索引文件用法
+- 同步后**清理远端已删除的本地文档**（移入回收站；`--no-prune` 可关闭）
+- 未变化的文档自动跳过（同 download 的版本边车机制，`--force` 强制重下）
+
+| 选项         | 简写 | 默认值 | 说明                                   |
+| ------------ | ---- | ------ | -------------------------------------- |
+| `--output`   | `-o` | `./`   | 镜像根目录                             |
+| `--comments` | `-c` | true   | 包含文档评论                           |
+| `--force`    | `-f` | false  | 强制重新下载未变化的文档               |
+| `--no-prune` | -    | false  | 保留远端已删除的本地文件（跳过清理）   |
 
 #### upload 命令
 

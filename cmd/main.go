@@ -126,6 +126,29 @@ func newRootCommand() *cli.Command {
 					return handleDownloadCommand(url)
 				},
 			},
+			{
+				Name:      "mirror",
+				Usage:     "One-way sync (download-only) a wiki/folder into a local mirror directory with CLAUDE.md and index files",
+				ArgsUsage: "[url]",
+				Description: "Mirror a Feishu wiki space, wiki subtree or drive folder into a local directory:\n" +
+					"the output directory itself is the mirror root. Always generates llms.txt,\n" +
+					"docs_map.md and a CLAUDE.md explaining the layout, and prunes local documents\n" +
+					"that no longer exist remotely (moved to trash). Re-run without <url> inside a\n" +
+					"mirror directory to re-sync from the recorded source.",
+				Flags: []cli.Flag{
+					&cli.StringFlag{Name: "output", Aliases: []string{"o"}, Value: "./", Usage: "Mirror root directory"},
+					&cli.BoolFlag{Name: "comments", Aliases: []string{"c"}, Value: true, Usage: "Include document comments in the exported Markdown"},
+					&cli.BoolFlag{Name: "force", Aliases: []string{"f"}, Usage: "Force re-download even if the remote document is unchanged"},
+					&cli.BoolFlag{Name: "no-prune", Usage: "Keep local files whose remote documents were deleted"},
+				},
+				Action: func(ctx context.Context, cmd *cli.Command) error {
+					mirrorOpts.outputDir = cmd.String("output")
+					mirrorOpts.comments = cmd.Bool("comments")
+					mirrorOpts.force = cmd.Bool("force")
+					mirrorOpts.noPrune = cmd.Bool("no-prune")
+					return handleMirrorCommand(cmd.Args().First())
+				},
+			},
 			newAuthCommand(),
 			newLoginAliasCommand(),
 			{

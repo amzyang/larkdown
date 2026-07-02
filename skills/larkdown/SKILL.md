@@ -49,6 +49,16 @@ larkdown dl "https://example.feishu.cn/wiki/xxx" -r --index -o /tmp/feishu-outpu
 larkdown dl /path/to/existing.md
 ```
 
+### 镜像知识库（单向只下载同步）
+
+```bash
+# 首次镜像：输出目录本身即镜像根，自动生成 llms.txt / docs_map.md / CLAUDE.md
+larkdown mirror "https://example.feishu.cn/wiki/xxx" -o ./my-wiki
+
+# 重新同步：来源已记录在镜像目录的 .larkdown-mirror.yaml，无需再传 URL
+cd my-wiki && larkdown mirror
+```
+
 ### 上传文档
 
 ```bash
@@ -92,6 +102,20 @@ larkdown 根据 URL 路径自动识别类型，不需要额外 flag：
 | `--no-diff`       | 禁用变更 diff 输出（默认下载时会显示与本地已有文件的 diff） | false  |
 
 当传入本地 .md 文件路径时，larkdown 会从文件 frontmatter 的 `source` 字段读取原始 URL 并重新下载，输出目录默认为该文件所在目录。
+
+### mirror
+
+把知识库空间、Wiki 子树或云文档文件夹**单向只下载同步**为本地镜像目录，适合喂给 AI Agent 或做本地知识库快照。与 `dl -r --index` 的区别：输出目录本身即镜像根（不嵌套知识库名子目录）、固定生成索引与 `CLAUDE.md` 说明、同步后清理远端已删除的本地文档（移入回收站）。
+
+| 参数             | 说明                                                       | 默认值 |
+| ---------------- | ---------------------------------------------------------- | ------ |
+| `[url]`          | 知识库/文件夹 URL；省略时从镜像目录的 `.larkdown-mirror.yaml` 读取来源重同步 | -      |
+| `-o, --output`   | 镜像根目录                                                 | `./`   |
+| `-c, --comments` | 包含文档评论                                               | true   |
+| `-f, --force`    | 强制重新下载未变化的文档                                   | false  |
+| `--no-prune`     | 保留远端已删除的本地文件（跳过清理）                       | false  |
+
+镜像目录中会生成：`llms.txt`（扁平文档列表）、`docs_map.md`（目录树 + 标题结构文档地图）、`CLAUDE.md`（面向 Agent 的镜像说明）、`.larkdown-mirror.yaml`（同步来源记录）。
 
 ### upload / ul
 

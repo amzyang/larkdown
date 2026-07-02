@@ -2,7 +2,7 @@
 
 function __fish_larkdown_no_subcommand
     for i in (commandline -opc)
-        if contains -- $i config download dl login upload ul publish diff open ocr
+        if contains -- $i config download dl mirror login upload ul publish diff open ocr
             return 1
         end
     end
@@ -30,6 +30,7 @@ complete -c larkdown -l version -s v -d 'print the version'
 complete -c larkdown -f -n __fish_larkdown_no_subcommand -a config   -d 'Read config file or set field(s) if provided'
 complete -c larkdown -f -n __fish_larkdown_no_subcommand -a download -d 'Download feishu/larksuite document to markdown file'
 complete -c larkdown -f -n __fish_larkdown_no_subcommand -a dl       -d 'Download feishu/larksuite document to markdown file'
+complete -c larkdown -f -n __fish_larkdown_no_subcommand -a mirror   -d 'One-way sync (download-only) a wiki/folder into a local mirror directory'
 complete -c larkdown -f -n __fish_larkdown_no_subcommand -a login    -d 'Login with Feishu OAuth to get user_access_token'
 complete -c larkdown -f -n __fish_larkdown_no_subcommand -a upload   -d 'Upload local markdown file to Feishu Wiki'
 complete -c larkdown -f -n __fish_larkdown_no_subcommand -a ul       -d 'Upload local markdown file to Feishu Wiki'
@@ -51,6 +52,12 @@ for _cmd in download dl
     complete -c larkdown -f -n "__fish_larkdown_using_command $_cmd" -l no-diff        -d 'Disable diff output when downloading'
     complete -c larkdown -f -n "__fish_larkdown_using_command $_cmd" -l force     -s f -d 'Force re-download even if the remote document is unchanged'
 end
+
+# mirror flags
+complete -c larkdown -r -n '__fish_larkdown_using_command mirror' -l output   -s o -d 'Mirror root directory'
+complete -c larkdown -f -n '__fish_larkdown_using_command mirror' -l comments -s c -d 'Include document comments in the exported Markdown'
+complete -c larkdown -f -n '__fish_larkdown_using_command mirror' -l force    -s f -d 'Force re-download even if the remote document is unchanged'
+complete -c larkdown -f -n '__fish_larkdown_using_command mirror' -l no-prune      -d 'Keep local files whose remote documents were deleted'
 
 # login flags
 complete -c larkdown -f -n '__fish_larkdown_using_command login' -l port -d 'Local callback server port'

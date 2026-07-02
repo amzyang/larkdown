@@ -78,7 +78,8 @@
 - [x] upload --incr --dryrun 用于诊断调试
   - [x] 需要 normalize
     - 结论：块级 diff 本身已规范化（签名基于 `canonicalTextContent`，空白外提/链接 URL 归一，`TestRoundTripSignatures` 保证下载产物 round-trip 全 Equal），无需再过 `NormalizeMarkdown`。真正的归一缺口在报告与执行不一致：执行侧 `collectDeletions` 会跳过「空文本块删除」与「实体仍被引用（重排）」，dryrun 却照报 DELETE。已抽出 `classifyDeletion` 供两侧共用，dryrun 现输出 SKIP-DEL / PRESERVE 并在 Summary 单列，与实际执行同口径
-- [ ] mirror subcommand
+- [x] mirror subcommand
+  - 单向只下载同步：`larkdown mirror <wiki/folder-url> -o <dir>`，输出目录即镜像根；固定生成 llms.txt + docs_map.md 索引与面向 Agent 的 CLAUDE.md 说明；`.larkdown-mirror.yaml` 记录来源支持无参重同步；同步后清理远端已删除的本地文档（移入回收站，`--no-prune` 关闭；部分失败时跳过清理防误删）
 - [x] bug: doesnt support image inside blockquote
 - [x] callout: 内嵌其它元素
 - [x] table: 内嵌其它元素
