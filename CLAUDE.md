@@ -173,16 +173,22 @@ git merge upstream/master
 # 1. 配置应用凭证
 larkdown config --appId <id> --appSecret <secret>
 
-# 2. (可选) OAuth 登录获取 user_access_token
-larkdown login
+# 2. (可选) OAuth 登录获取 user_access_token（旧命令 larkdown login 仍作隐藏别名可用）
+larkdown auth login
 
 # 3. 下载文档（优先使用 user_access_token，过期自动刷新，失败降级到应用凭证）
 larkdown download <url>
+
+# 诊断当前认证状态（只读，不触发刷新）
+larkdown auth status
+
+# 撤销并清除本地 user_access_token，回落应用凭证
+larkdown auth logout
 ```
 
 ### OAuth 配置要求
 
-使用 `larkdown login` 需要在飞书开放平台配置重定向 URL：
+使用 `larkdown auth login` 需要在飞书开放平台配置重定向 URL：
 
 - 进入应用 -> 安全设置 -> 重定向 URL
 - 添加 `http://localhost:9999/callback`

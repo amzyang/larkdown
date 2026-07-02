@@ -127,17 +127,8 @@ func newRootCommand() *cli.Command {
 					return handleDownloadCommand(url)
 				},
 			},
-			{
-				Name:  "login",
-				Usage: "Login with Feishu OAuth to get user_access_token",
-				Flags: []cli.Flag{
-					&cli.IntFlag{Name: "port", Value: 9999, Usage: "Local callback server port"},
-				},
-				Action: func(ctx context.Context, cmd *cli.Command) error {
-					loginOpts.port = int(cmd.Int("port"))
-					return handleLoginCommand()
-				},
-			},
+			newAuthCommand(),
+			newLoginAliasCommand(),
 			{
 				Name:      "upload",
 				Aliases:   []string{"ul"},

@@ -116,7 +116,7 @@ larkdown 根据 URL 路径自动识别类型，不需要额外 flag：
 
 ### publish
 
-将本地 HTML 文件或整个目录发布为飞书妙搭（Miaoda）在线应用，返回可访问的 URL。需要 user_access_token，请先 `larkdown login`。
+将本地 HTML 文件或整个目录发布为飞书妙搭（Miaoda）在线应用，返回可访问的 URL。需要 user_access_token，请先 `larkdown auth login`。
 
 首次发布会自动新建应用并在本地写入发布记录；之后对同一路径重新执行 `publish` 会复用该应用做更新，URL 保持不变。
 
@@ -157,15 +157,19 @@ larkdown ocr screenshot.png    # 从文件读取
 cat image.jpg | larkdown ocr - # 从 stdin 读取
 ```
 
-### login
+### auth
 
-OAuth 登录，获取 user_access_token。
+认证管理命令组：`login` / `status` / `logout`。
 
 ```bash
-larkdown login [--port 9999]
+larkdown auth login [--port 9999]   # OAuth 登录获取 user_access_token
+larkdown auth status                # 查看认证状态（只读，不触发刷新）
+larkdown auth logout                # 撤销并清除本地 user_access_token
 ```
 
-打开浏览器进行飞书授权，成功后自动保存凭证。`--port` 指定本地回调服务器端口（默认 9999）。
+`auth login` 打开浏览器进行飞书授权，成功后自动保存凭证，`--port` 指定本地回调服务器端口（默认 9999）。`auth status` 打印配置路径、app_id 与当前认证方式（user token 有效时展示用户身份）。`auth logout` best-effort 撤销远端 token 并清空本地凭证，回落应用凭证。
+
+> 旧命令 `larkdown login` 仍作为 `larkdown auth login` 的隐藏别名保留。
 
 ### config
 
@@ -179,7 +183,7 @@ larkdown config --appId xxx --appSecret xxx  # 设置凭证
 ## 环境要求
 
 - **安装**：详见 [高级用法 - 安装](references/advanced-usage.md#安装)
-- **首次使用**：先 `larkdown config` 设置 App ID/Secret，再 `larkdown login` 授权
+- **首次使用**：先 `larkdown config` 设置 App ID/Secret，再 `larkdown auth login` 授权
 - **配置文件**：`~/.config/feishu2md/config.json`（路径字面量沿用旧名以兼容老配置）
 
 ## 注意事项

@@ -17,7 +17,7 @@ brew install amzyang/tap/larkdown
 2. 在应用设置中添加重定向 URL：`http://localhost:9999/callback`（安全设置 → 重定向 URL）
 3. 打开开发配置/权限管理，批量导入权限：[permissions.json](https://raw.githubusercontent.com/amzyang/larkdown/main/permissions.json)
 4. 配置应用凭证：`larkdown config --appId cli_xxxxx --appSecret xxxxx`
-5. OAuth 登录：`larkdown login`（浏览器会打开飞书授权页面，授权后自动保存凭证）
+5. OAuth 登录：`larkdown auth login`（浏览器会打开飞书授权页面，授权后自动保存凭证；旧命令 `larkdown login` 仍作隐藏别名可用）
 
 ## 配置文件
 
@@ -108,11 +108,11 @@ larkdown --debug dl "https://example.feishu.cn/docx/xxx" -o /tmp/output
 
 ### 下载失败提示权限不足
 
-检查当前用户是否有权限访问目标文档。使用 `larkdown login` 确保以正确的用户身份登录。
+检查当前用户是否有权限访问目标文档。使用 `larkdown auth login` 确保以正确的用户身份登录，`larkdown auth status` 可查看当前登录身份。
 
 ### Token 过期
 
-larkdown 会自动刷新 token。如果刷新失败，重新运行 `larkdown login`。
+larkdown 会自动刷新 token。如果刷新失败，重新运行 `larkdown auth login`。
 
 ### 图片下载失败
 

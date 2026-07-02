@@ -20,13 +20,17 @@ type FeishuConfig struct {
 	TokenExpireTime int64  `json:"token_expire_time,omitempty"`
 }
 
+// UserTokenExpiryLeewaySeconds 是判定 user_access_token 有效性的提前量：
+// 剩余有效期不足此秒数即视为过期，提前触发刷新，避免临界值请求打到过期 token。
+const UserTokenExpiryLeewaySeconds = 300
+
 // HasValidUserToken 检查 user_access_token 是否有效
 func (c *FeishuConfig) HasValidUserToken() bool {
 	if c.UserAccessToken == "" {
 		return false
 	}
 	// 提前 5 分钟认为过期，触发刷新
-	return time.Now().Unix() < c.TokenExpireTime-300
+	return time.Now().Unix() < c.TokenExpireTime-UserTokenExpiryLeewaySeconds
 }
 
 // NeedsRefresh 检查是否需要刷新 token

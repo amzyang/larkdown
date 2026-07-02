@@ -2,10 +2,13 @@ package core
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 
 	"github.com/chyroc/lark"
@@ -16,12 +19,21 @@ const (
 	DefaultRedirectPath = "/callback"
 )
 
+// 飞书 OAuth token 撤销端点（accounts 域，非 open 域）。
+// 考证：lark CLI ResolveOAuthEndpoints = ep.Accounts("https://accounts.feishu.cn") + "/oauth/v1/revoke"。
+const (
+	defaultRevokeBaseURL = "https://accounts.feishu.cn"
+	revokePath           = "/oauth/v1/revoke"
+)
+
 // OAuthManager 管理 OAuth 流程
 type OAuthManager struct {
-	appId       string
-	appSecret   string
-	redirectURI string
-	larkClient  *lark.Lark
+	appId         string
+	appSecret     string
+	redirectURI   string
+	larkClient    *lark.Lark
+	revokeBaseURL string // token 撤销端点 base，默认飞书 accounts 域；测试用 httptest.Server 注入
+	httpClient    *http.Client
 }
 
 // NewOAuthManager 创建 OAuth 管理器
@@ -34,10 +46,12 @@ func NewOAuthManager(appId, appSecret string, port int, opts *ClientOptions) *OA
 		larkOpts = append(larkOpts, lark.WithLogger(lark.NewLoggerStdout(), lark.LogLevelTrace))
 	}
 	return &OAuthManager{
-		appId:       appId,
-		appSecret:   appSecret,
-		redirectURI: redirectURI,
-		larkClient:  lark.New(larkOpts...),
+		appId:         appId,
+		appSecret:     appSecret,
+		redirectURI:   redirectURI,
+		larkClient:    lark.New(larkOpts...),
+		revokeBaseURL: defaultRevokeBaseURL,
+		httpClient:    &http.Client{Timeout: 10 * time.Second},
 	}
 }
 
@@ -93,6 +107,47 @@ func (m *OAuthManager) RefreshUserToken(ctx context.Context, refreshToken string
 		RefreshToken:    resp.RefreshToken,
 		ExpiresIn:       resp.ExpiresIn,
 	}, nil
+}
+
+// RevokeToken 撤销一枚已签发的 OAuth token（best-effort 登出用）。
+// 飞书 SDK 未暴露 revoke API，直接打裸 HTTP：POST <accounts 域>/oauth/v1/revoke，
+// application/x-www-form-urlencoded。tokenTypeHint 取 "refresh_token" 或 "access_token"。
+func (m *OAuthManager) RevokeToken(ctx context.Context, token, tokenTypeHint string) error {
+	form := url.Values{}
+	form.Set("client_id", m.appId)
+	form.Set("client_secret", m.appSecret)
+	form.Set("token", token)
+	if tokenTypeHint != "" {
+		form.Set("token_type_hint", tokenTypeHint)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, m.revokeBaseURL+revokePath, strings.NewReader(form.Encode()))
+	if err != nil {
+		return fmt.Errorf("构造 revoke 请求失败: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	resp, err := m.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("revoke 请求失败: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode >= 400 {
+		return fmt.Errorf("revoke 失败: HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	// 飞书业务错误：HTTP 200 但 body 里 code != 0
+	if len(body) > 0 {
+		var data struct {
+			Code int    `json:"code"`
+			Msg  string `json:"msg"`
+		}
+		if err := json.Unmarshal(body, &data); err == nil && data.Code != 0 {
+			return fmt.Errorf("revoke 失败 [%d]: %s", data.Code, data.Msg)
+		}
+	}
+	return nil
 }
 
 // OAuthCallbackServer 本地回调服务器

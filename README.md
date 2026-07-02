@@ -64,8 +64,12 @@ download 命令默认在下载后显示内容变更的 diff 输出，使用 `mon
 ### 登录授权
 
 ```bash
-larkdown login
+larkdown auth login          # OAuth 登录获取 user_access_token
+larkdown auth status         # 查看当前认证状态（只读，不触发刷新）
+larkdown auth logout         # 撤销并清除本地 user_access_token
 ```
+
+> 旧命令 `larkdown login` 仍作为 `larkdown auth login` 的隐藏别名保留，老脚本无需修改。
 
 ## 如何使用
 
@@ -79,7 +83,8 @@ larkdown login
 | `download` | `dl` | 下载飞书文档为 Markdown                  |
 | `upload`   | `ul` | 上传 Markdown 到飞书 Wiki                |
 | `publish`  | -    | 发布本地 HTML 文件/目录为飞书妙搭在线应用 |
-| `login`    | -    | OAuth 登录获取 user_access_token         |
+| `auth`     | -    | 认证管理：`login` / `status` / `logout`  |
+| `login`    | -    | `auth login` 的隐藏兼容别名              |
 | `open`     | -    | 在浏览器中打开 Markdown 对应的飞书源文档 |
 | `diff`     | -    | 对比本地 Markdown 与飞书线上版本的差异   |
 | `ocr`      | -    | 识别图片中的文字（飞书 AI OCR）          |
@@ -118,7 +123,7 @@ larkdown login
 
 #### publish 命令
 
-将本地 HTML 文件或整个目录发布为飞书妙搭（Miaoda）在线应用，返回可访问的 URL。需要 user_access_token，请先执行 `larkdown login`。
+将本地 HTML 文件或整个目录发布为飞书妙搭（Miaoda）在线应用，返回可访问的 URL。需要 user_access_token，请先执行 `larkdown auth login`。
 
 首次发布会自动新建应用，并在本地写入发布记录（记录 app_id）；之后对同一路径重新执行 `publish` 会自动复用该应用做更新，URL 保持不变。
 
@@ -283,10 +288,10 @@ larkdown config
 
 1. 重新导入权限配置：进入飞书开发者后台 -> 权限管理 -> 批量导入 [permissions.json](https://raw.githubusercontent.com/amzyang/larkdown/main/permissions.json)
 
-2. 重新登录 `larkdown login` 获取新的授权：
+2. 重新登录 `larkdown auth login` 获取新的授权：
 
 ```bash
-larkdown login
+larkdown auth login
 ```
 
 ### 3. 启用调试日志
