@@ -125,17 +125,21 @@ func getUserTokenFromConfig(t *testing.T) (string, string, string) {
 		t.Skip("failed to read config:", err)
 	}
 	if config.Feishu.UserAccessToken == "" {
-		t.Skip("user_access_token not configured, run 'larkdown login' first")
+		t.Skip("user_access_token not configured, run 'larkdown auth login' first")
 	}
 	if config.Feishu.NeedsRefresh() {
-		oauth := core.NewOAuthManager(config.Feishu.AppId, config.Feishu.AppSecret, core.DefaultOAuthPort, nil)
+		oauth := core.NewOAuthManager(config.Feishu.AppId, config.Feishu.AppSecret, nil)
 		result, err := oauth.RefreshUserToken(context.Background(), config.Feishu.RefreshToken)
 		if err != nil {
 			t.Skip("failed to refresh token:", err)
 		}
+		now := time.Now().Unix()
 		config.Feishu.UserAccessToken = result.UserAccessToken
 		config.Feishu.RefreshToken = result.RefreshToken
-		config.Feishu.TokenExpireTime = time.Now().Unix() + result.ExpiresIn
+		config.Feishu.TokenExpireTime = now + result.ExpiresIn
+		if result.RefreshExpiresIn > 0 {
+			config.Feishu.RefreshTokenExpireTime = now + result.RefreshExpiresIn
+		}
 		if err := config.WriteConfig2File(configPath); err != nil {
 			t.Logf("warning: failed to save refreshed token: %v", err)
 		}

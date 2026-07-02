@@ -36,7 +36,6 @@ func createClientFromConfig(ctx context.Context, config *core.Config, configPath
 		oauthMgr := core.NewOAuthManager(
 			config.Feishu.AppId,
 			config.Feishu.AppSecret,
-			core.DefaultOAuthPort,
 			globalOpts.clientOpts,
 		)
 		outcome, err := core.EnsureFreshUserToken(ctx, config, configPath, oauthMgr)
@@ -54,7 +53,7 @@ func createClientFromConfig(ctx context.Context, config *core.Config, configPath
 				globalOpts.clientOpts,
 			)
 		case core.RefreshOutcomeTokenInvalidCleared:
-			fmt.Fprintf(os.Stderr, "user_access_token 已失效（%v），请重新执行 larkdown login；本次使用应用凭证 (tenant_access_token)\n", err)
+			fmt.Fprintf(os.Stderr, "user_access_token 已失效（%v），请重新执行 larkdown auth login；本次使用应用凭证 (tenant_access_token)\n", err)
 		case core.RefreshOutcomeTransientFailure:
 			fmt.Fprintf(os.Stderr, "刷新 token 失败（网络波动？%v），本次使用应用凭证；token 保留，下次自动重试\n", err)
 		}

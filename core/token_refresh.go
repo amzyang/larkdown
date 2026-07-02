@@ -4,10 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"path/filepath"
 	"time"
 
-	"github.com/chyroc/lark"
 	"github.com/gofrs/flock"
 )
 
@@ -62,6 +62,17 @@ func EnsureFreshUserToken(ctx context.Context, config *Config, configPath string
 	if config.Feishu.RefreshToken == "" {
 		return RefreshOutcomeTokenInvalidCleared, errors.New("refresh_token 已被其他进程清除")
 	}
+	// refresh_token 已确定过期：跳过注定失败的网络刷新，直接清 token 提示重登
+	if config.Feishu.RefreshTokenExpired() {
+		config.Feishu.UserAccessToken = ""
+		config.Feishu.RefreshToken = ""
+		config.Feishu.TokenExpireTime = 0
+		config.Feishu.RefreshTokenExpireTime = 0
+		if werr := config.WriteConfig2File(configPath); werr != nil {
+			return RefreshOutcomeTokenInvalidCleared, fmt.Errorf("清除失效 token 写入配置失败: %w", werr)
+		}
+		return RefreshOutcomeTokenInvalidCleared, errors.New("refresh_token 已过期，请重新登录")
+	}
 
 	result, err := refresher.RefreshUserToken(ctx, config.Feishu.RefreshToken)
 	if err != nil && isTransientRefreshError(err) {
@@ -70,9 +81,13 @@ func EnsureFreshUserToken(ctx context.Context, config *Config, configPath string
 	}
 	switch {
 	case err == nil:
+		now := time.Now().Unix()
 		config.Feishu.UserAccessToken = result.UserAccessToken
 		config.Feishu.RefreshToken = result.RefreshToken
-		config.Feishu.TokenExpireTime = time.Now().Unix() + result.ExpiresIn
+		config.Feishu.TokenExpireTime = now + result.ExpiresIn
+		if result.RefreshExpiresIn > 0 {
+			config.Feishu.RefreshTokenExpireTime = now + result.RefreshExpiresIn
+		}
 		if werr := config.WriteConfig2File(configPath); werr != nil {
 			return RefreshOutcomeRefreshed, fmt.Errorf("token 已刷新但写入配置失败: %w", werr)
 		}
@@ -84,6 +99,7 @@ func EnsureFreshUserToken(ctx context.Context, config *Config, configPath string
 		config.Feishu.UserAccessToken = ""
 		config.Feishu.RefreshToken = ""
 		config.Feishu.TokenExpireTime = 0
+		config.Feishu.RefreshTokenExpireTime = 0
 		if werr := config.WriteConfig2File(configPath); werr != nil {
 			return RefreshOutcomeTokenInvalidCleared, fmt.Errorf("清除失效 token 写入配置失败: %w", werr)
 		}
@@ -91,28 +107,40 @@ func EnsureFreshUserToken(ctx context.Context, config *Config, configPath string
 	}
 }
 
-// copyTokenFields 把磁盘上最新的 token 三字段同步进内存 config。
+// copyTokenFields 把磁盘上最新的 token 字段同步进内存 config。
 func copyTokenFields(dst *Config, src *FeishuConfig) {
 	dst.Feishu.UserAccessToken = src.UserAccessToken
 	dst.Feishu.RefreshToken = src.RefreshToken
 	dst.Feishu.TokenExpireTime = src.TokenExpireTime
+	dst.Feishu.RefreshTokenExpireTime = src.RefreshTokenExpireTime
 }
 
 // isTransientRefreshError 判定刷新失败是否为瞬时错误（可重试、不清 token）。
-// 飞书 refresh 端点错误码分级（考证自 open.feishu.cn OAuth 错误码与 lark-cli errclass 注册表）：
-//   - 确定性失效：20026(refresh_token 无效/旧格式)、20037(过期)、20064(被撤销)、20073(已被使用)
-//   - 瞬时：20050(刷新端点服务端内部错误)、99991400(限流)
+// v2 刷新端点（/open-apis/authen/v2/oauth/token）返回 OAuth2 风格错误或飞书业务码，
+// 由 *RefreshTokenError 承载（见 oauth.go）。分级哲学与旧 v1 一致：
+//   - 服务端给了结构化业务/OAuth 错误 → 默认确定性失效（清 token、提示重登）
+//   - 够不到服务端 / 5xx / 429 / 明确的临时错误 → 瞬时（保留 token、重试）
 //
-// 保守缺省：带飞书业务错误码的 *lark.Error 视为确定性失效；
-// 传输层错误（net error、context 超时、空响应 5xx/429）视为瞬时。
+// 瞬时：传输层错误、context 超时、body 读取/解析失败、缺 access_token（非 *RefreshTokenError）；
+//
+//	HTTP 5xx/429；OAuth server_error/temporarily_unavailable/slow_down；飞书码 20050/99991400。
+//
+// 确定性失效：invalid_grant/invalid_request/invalid_client 等其余结构化 4xx。
 func isTransientRefreshError(err error) bool {
-	var larkErr *lark.Error
-	if errors.As(err, &larkErr) {
-		switch larkErr.Code {
-		case 20050, 99991400:
-			return true
-		}
-		return false
+	var rerr *RefreshTokenError
+	if !errors.As(err, &rerr) {
+		return true
 	}
-	return true
+	if rerr.HTTPStatus >= 500 || rerr.HTTPStatus == http.StatusTooManyRequests {
+		return true
+	}
+	switch rerr.OAuthError {
+	case "server_error", "temporarily_unavailable", "slow_down":
+		return true
+	}
+	switch rerr.FeishuCode {
+	case 20050, 99991400:
+		return true
+	}
+	return false
 }

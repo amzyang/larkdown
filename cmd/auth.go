@@ -10,15 +10,25 @@ import (
 	"github.com/urfave/cli/v3"
 )
 
-// loginPortFlag 返回登录端口 flag，供 `auth login` 与顶层兼容别名 `login` 复用。
-func loginPortFlag() cli.Flag {
-	return &cli.IntFlag{Name: "port", Value: core.DefaultOAuthPort, Usage: "Local callback server port"}
+// loginFlags 返回 `auth login`（及隐藏别名 `login`）的 flag 集合。
+// --no-wait / --device-code 组成两段式登录（agent/CI/无头环境友好），--json 输出机读事件；
+// --port 已废弃、保留为隐藏 no-op，以免 `larkdown login --port 9999` 这类老脚本因未定义 flag 中断。
+func loginFlags() []cli.Flag {
+	return []cli.Flag{
+		&cli.BoolFlag{Name: "no-wait", Usage: "Request a device code, print it and exit without polling (for agent/CI two-step login)"},
+		&cli.StringFlag{Name: "device-code", Usage: "Resume polling with a device code from a prior --no-wait run"},
+		&cli.BoolFlag{Name: "json", Usage: "Emit machine-readable JSON events (device_authorization / authorized)"},
+		&cli.IntFlag{Name: "port", Hidden: true, Usage: "Deprecated: no-op (device flow needs no local callback)"},
+	}
 }
 
 // runLogin 是 `auth login` / `login` 的共享 action。
 func runLogin(ctx context.Context, cmd *cli.Command) error {
-	loginOpts.port = int(cmd.Int("port"))
-	return handleLoginCommand()
+	return handleLoginCommand(loginOptions{
+		noWait:     cmd.Bool("no-wait"),
+		deviceCode: cmd.String("device-code"),
+		json:       cmd.Bool("json"),
+	})
 }
 
 // newAuthCommand 构造 `larkdown auth` 命令组（login / status / logout）。
@@ -29,8 +39,8 @@ func newAuthCommand() *cli.Command {
 		Commands: []*cli.Command{
 			{
 				Name:   "login",
-				Usage:  "Login with Feishu OAuth to get user_access_token",
-				Flags:  []cli.Flag{loginPortFlag()},
+				Usage:  "Login with Feishu OAuth device flow to get user_access_token",
+				Flags:  loginFlags(),
 				Action: runLogin,
 			},
 			{
@@ -57,7 +67,7 @@ func newLoginAliasCommand() *cli.Command {
 		Name:   "login",
 		Hidden: true,
 		Usage:  "Alias of 'auth login'",
-		Flags:  []cli.Flag{loginPortFlag()},
+		Flags:  loginFlags(),
 		Action: runLogin,
 	}
 }
@@ -71,14 +81,21 @@ func formatAuthStatus(cfg core.FeishuConfig, configPath string, now time.Time) [
 	}
 
 	valid := cfg.UserAccessToken != "" && now.Unix() < cfg.TokenExpireTime-core.UserTokenExpiryLeewaySeconds
-	needsRefresh := !valid && cfg.RefreshToken != "" && cfg.UserAccessToken != ""
+	refreshExpired := cfg.RefreshTokenExpireTime > 0 && now.Unix() >= cfg.RefreshTokenExpireTime
+	needsRefresh := !valid && cfg.RefreshToken != "" && cfg.UserAccessToken != "" && !refreshExpired
 
 	switch {
 	case valid:
 		expireAt := time.Unix(cfg.TokenExpireTime, 0).Format("2006-01-02 15:04:05")
 		lines = append(lines, "认证方式: user_access_token（有效，至 "+expireAt+"）")
+		if cfg.RefreshTokenExpireTime > 0 {
+			refreshAt := time.Unix(cfg.RefreshTokenExpireTime, 0).Format("2006-01-02 15:04:05")
+			lines = append(lines, "刷新令牌有效期至: "+refreshAt)
+		}
 	case needsRefresh:
 		lines = append(lines, "认证方式: user_access_token（已过期，下次命令将自动刷新）")
+	case (cfg.UserAccessToken != "" || cfg.RefreshToken != "") && refreshExpired:
+		lines = append(lines, "认证方式: 登录已过期（刷新令牌失效），请重新执行 larkdown auth login")
 	default:
 		lines = append(lines, "认证方式: tenant_access_token（应用凭证）；可用 larkdown auth login 获取用户身份")
 	}
@@ -145,7 +162,7 @@ func handleLogoutCommand(ctx context.Context) error {
 		return nil
 	}
 
-	oauthMgr := core.NewOAuthManager(config.Feishu.AppId, config.Feishu.AppSecret, core.DefaultOAuthPort, globalOpts.clientOpts)
+	oauthMgr := core.NewOAuthManager(config.Feishu.AppId, config.Feishu.AppSecret, globalOpts.clientOpts)
 	if err := core.Logout(ctx, config, configPath, oauthMgr, os.Stderr); err != nil {
 		return fmt.Errorf("清除本地 token 失败: %w", err)
 	}

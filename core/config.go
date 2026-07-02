@@ -13,11 +13,12 @@ type Config struct {
 }
 
 type FeishuConfig struct {
-	AppId           string `json:"app_id"`
-	AppSecret       string `json:"app_secret"`
-	UserAccessToken string `json:"user_access_token,omitempty"`
-	RefreshToken    string `json:"refresh_token,omitempty"`
-	TokenExpireTime int64  `json:"token_expire_time,omitempty"`
+	AppId                  string `json:"app_id"`
+	AppSecret              string `json:"app_secret"`
+	UserAccessToken        string `json:"user_access_token,omitempty"`
+	RefreshToken           string `json:"refresh_token,omitempty"`
+	TokenExpireTime        int64  `json:"token_expire_time,omitempty"`
+	RefreshTokenExpireTime int64  `json:"refresh_token_expire_time,omitempty"`
 }
 
 // UserTokenExpiryLeewaySeconds 是判定 user_access_token 有效性的提前量：
@@ -36,6 +37,12 @@ func (c *FeishuConfig) HasValidUserToken() bool {
 // NeedsRefresh 检查是否需要刷新 token
 func (c *FeishuConfig) NeedsRefresh() bool {
 	return c.RefreshToken != "" && c.UserAccessToken != "" && !c.HasValidUserToken()
+}
+
+// RefreshTokenExpired 报告 refresh_token 是否确定已过期。
+// RefreshTokenExpireTime==0 表示未知（v1 老 config / 未记录），返回 false 以不阻断刷新尝试。
+func (c *FeishuConfig) RefreshTokenExpired() bool {
+	return c.RefreshTokenExpireTime > 0 && time.Now().Unix() >= c.RefreshTokenExpireTime
 }
 
 type OutputConfig struct {

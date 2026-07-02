@@ -4,12 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"path/filepath"
 	"sync"
 	"testing"
 	"time"
 
-	"github.com/chyroc/lark"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -59,7 +59,7 @@ func newExpiredConfig(t *testing.T) (*Config, string) {
 func TestEnsureFreshUserToken_Success(t *testing.T) {
 	config, configPath := newExpiredConfig(t)
 	refresher := &fakeRefresher{results: []fakeRefreshResult{
-		{token: &TokenResult{UserAccessToken: "u-new", RefreshToken: "ur-new", ExpiresIn: 7200}},
+		{token: &TokenResult{UserAccessToken: "u-new", RefreshToken: "ur-new", ExpiresIn: 7200, RefreshExpiresIn: 604800}},
 	}}
 
 	outcome, err := EnsureFreshUserToken(context.Background(), config, configPath, refresher)
@@ -70,6 +70,7 @@ func TestEnsureFreshUserToken_Success(t *testing.T) {
 	assert.Equal(t, "u-new", config.Feishu.UserAccessToken)
 	assert.Equal(t, "ur-new", config.Feishu.RefreshToken)
 	assert.Greater(t, config.Feishu.TokenExpireTime, time.Now().Unix())
+	assert.Greater(t, config.Feishu.RefreshTokenExpireTime, time.Now().Unix())
 
 	// 已落盘
 	onDisk, err := ReadConfigFromFile(configPath)
@@ -101,8 +102,8 @@ func TestEnsureFreshUserToken_RefreshedByOther(t *testing.T) {
 
 func TestEnsureFreshUserToken_DeterministicFailureClearsToken(t *testing.T) {
 	config, configPath := newExpiredConfig(t)
-	// 模拟 OAuthManager 的包装形态：fmt.Errorf("%w", *lark.Error)
-	refreshErr := fmt.Errorf("刷新 token 失败: %w", &lark.Error{Code: 20037, Msg: "refresh token expired"})
+	// 模拟 OAuthManager 的包装形态：fmt.Errorf("%w", *RefreshTokenError)
+	refreshErr := fmt.Errorf("刷新 token 失败: %w", &RefreshTokenError{OAuthError: "invalid_grant", HTTPStatus: http.StatusBadRequest})
 	refresher := &fakeRefresher{results: []fakeRefreshResult{{err: refreshErr}}}
 
 	outcome, err := EnsureFreshUserToken(context.Background(), config, configPath, refresher)
@@ -195,14 +196,20 @@ func TestIsTransientRefreshError(t *testing.T) {
 		err       error
 		transient bool
 	}{
-		{"refresh_token 旧格式无效 20026", &lark.Error{Code: 20026}, false},
-		{"refresh_token 过期 20037", &lark.Error{Code: 20037}, false},
-		{"refresh_token 被撤销 20064", &lark.Error{Code: 20064}, false},
-		{"refresh_token 已被使用 20073", &lark.Error{Code: 20073}, false},
-		{"刷新端点服务端错误 20050", &lark.Error{Code: 20050}, true},
-		{"限流 99991400", &lark.Error{Code: 99991400}, true},
-		{"包装后的确定性错误", fmt.Errorf("刷新 token 失败: %w", &lark.Error{Code: 20064}), false},
-		{"包装后的瞬时错误", fmt.Errorf("刷新 token 失败: %w", &lark.Error{Code: 20050}), true},
+		{"invalid_grant 确定性", &RefreshTokenError{OAuthError: "invalid_grant", HTTPStatus: 400}, false},
+		{"invalid_request 确定性", &RefreshTokenError{OAuthError: "invalid_request", HTTPStatus: 400}, false},
+		{"invalid_client 确定性", &RefreshTokenError{OAuthError: "invalid_client", HTTPStatus: 400}, false},
+		{"纯 4xx 无 error 字段确定性", &RefreshTokenError{HTTPStatus: 400}, false},
+		{"HTTP 500 瞬时", &RefreshTokenError{HTTPStatus: 500}, true},
+		{"HTTP 503 瞬时", &RefreshTokenError{HTTPStatus: 503}, true},
+		{"HTTP 429 瞬时", &RefreshTokenError{HTTPStatus: 429}, true},
+		{"server_error 瞬时", &RefreshTokenError{OAuthError: "server_error", HTTPStatus: 400}, true},
+		{"temporarily_unavailable 瞬时", &RefreshTokenError{OAuthError: "temporarily_unavailable", HTTPStatus: 400}, true},
+		{"飞书码 20050 瞬时", &RefreshTokenError{FeishuCode: 20050}, true},
+		{"飞书码 99991400 瞬时", &RefreshTokenError{FeishuCode: 99991400}, true},
+		{"飞书码 20037 确定性", &RefreshTokenError{FeishuCode: 20037}, false},
+		{"包装后确定性", fmt.Errorf("刷新 token 失败: %w", &RefreshTokenError{OAuthError: "invalid_grant", HTTPStatus: 400}), false},
+		{"包装后瞬时", fmt.Errorf("刷新 token 失败: %w", &RefreshTokenError{HTTPStatus: 500}), true},
 		{"传输层错误", errors.New("dial tcp: i/o timeout"), true},
 		{"context 超时", context.DeadlineExceeded, true},
 	}
@@ -211,4 +218,43 @@ func TestIsTransientRefreshError(t *testing.T) {
 			assert.Equal(t, tc.transient, isTransientRefreshError(tc.err))
 		})
 	}
+}
+
+func TestEnsureFreshUserToken_RefreshTokenExpiredShortCircuits(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	config := NewConfig("app-id", "app-secret")
+	config.Feishu.UserAccessToken = "u-old"
+	config.Feishu.RefreshToken = "ur-old"
+	config.Feishu.TokenExpireTime = time.Now().Unix() - 100
+	config.Feishu.RefreshTokenExpireTime = time.Now().Unix() - 50 // refresh_token 也已过期
+	require.NoError(t, config.WriteConfig2File(configPath))
+
+	refresher := &fakeRefresher{results: []fakeRefreshResult{{err: errors.New("should not be called")}}}
+
+	outcome, err := EnsureFreshUserToken(context.Background(), config, configPath, refresher)
+
+	require.Error(t, err)
+	assert.Equal(t, RefreshOutcomeTokenInvalidCleared, outcome)
+	assert.Equal(t, 0, refresher.callCount(), "refresh_token 已过期应短路，不触发网络刷新")
+	assert.Empty(t, config.Feishu.UserAccessToken)
+	assert.Empty(t, config.Feishu.RefreshToken)
+	assert.Zero(t, config.Feishu.RefreshTokenExpireTime)
+
+	onDisk, readErr := ReadConfigFromFile(configPath)
+	require.NoError(t, readErr)
+	assert.Empty(t, onDisk.Feishu.RefreshToken)
+}
+
+func TestEnsureFreshUserToken_LegacyNoRefreshExpiryStillAttempts(t *testing.T) {
+	config, configPath := newExpiredConfig(t) // RefreshTokenExpireTime == 0（v1 老 config）
+	refresher := &fakeRefresher{results: []fakeRefreshResult{
+		{token: &TokenResult{UserAccessToken: "u-new", RefreshToken: "ur-new", ExpiresIn: 7200, RefreshExpiresIn: 604800}},
+	}}
+
+	outcome, err := EnsureFreshUserToken(context.Background(), config, configPath, refresher)
+
+	require.NoError(t, err)
+	assert.Equal(t, RefreshOutcomeRefreshed, outcome)
+	assert.GreaterOrEqual(t, refresher.callCount(), 1, "无过期时间不应短路")
+	assert.Greater(t, config.Feishu.RefreshTokenExpireTime, time.Now().Unix())
 }
