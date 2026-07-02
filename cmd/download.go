@@ -81,16 +81,19 @@ func downloadDocument(ctx context.Context, client *core.Client, url string, opts
 		return nil, errors.Errorf("不支持的文档类型: %s", docType)
 	}
 
-	// 跳过未变化文档：本地已有带版本标记的下载产物，且远程版本一致 → 免拉取块与素材。
-	// 仅当本地候选存在时才多打一次轻量 GetDocxDocument；全新下载零额外 API 调用。
+	// 跳过未变化文档：中心化边车（<UserCacheDir>/feishu2md/downloads/<document_id>.yaml）
+	// 记录上次下载的产物路径与远程版本，版本一致且产物仍在 → 免拉取块与素材。
+	// 仅当本地记录存在时才多打一次轻量 GetDocxDocument；全新下载零额外 API 调用。
 	if !opts.force {
-		localPath, localFM, localBody := core.FindLocalFileByToken(opts.outputDir, urlToken, nodeTitle, dlConfig.Output)
-		if localFM != nil && localFM.Version != "" {
-			if doc, err := client.GetDocxDocument(ctx, docToken); err == nil &&
-				core.DownloadVersion(objEditTime, doc.RevisionID) == localFM.Version {
-				fmt.Printf("未变化，跳过: %s\n", localPath)
-				meta := core.LocalDocMeta(localPath, localBody)
-				return &meta, nil
+		if rec := lookupDownloadRecord(docToken, opts.outputDir); rec != nil {
+			if content, err := os.ReadFile(rec.Path); err == nil {
+				if doc, err := client.GetDocxDocument(ctx, docToken); err == nil &&
+					core.DownloadVersion(objEditTime, doc.RevisionID) == rec.Version {
+					fmt.Printf("未变化，跳过: %s\n", rec.Path)
+					_, body, _ := core.ParseFrontMatter(string(content))
+					meta := core.LocalDocMeta(rec.Path, body)
+					return &meta, nil
+				}
 			}
 		}
 	}
@@ -163,14 +166,8 @@ func downloadDocument(ctx context.Context, client *core.Client, url string, opts
 	}
 
 	// Add Front Matter (appended at file end)
-	// 版本标记用于下次下载跳过未变化文档；素材下载不完整时不落标记，保证下次重试
-	version := core.DownloadVersion(objEditTime, docx.RevisionID)
-	if len(failedAssets) > 0 {
-		version = ""
-	}
 	frontMatter := core.GenerateFrontMatter(core.FrontMatter{
-		Source:  url,
-		Version: version,
+		Source: url,
 	})
 	markdown = strings.TrimRight(markdown, "\n") + "\n" + frontMatter
 
@@ -199,6 +196,13 @@ func downloadDocument(ctx context.Context, client *core.Client, url string, opts
 	}
 	fmt.Printf("Downloaded markdown file to %s\n", outputPath)
 
+	// 记录下载版本（供下次跳过未变化文档）；素材下载不完整时清除记录，保证下次重试
+	version := core.DownloadVersion(objEditTime, docx.RevisionID)
+	if len(failedAssets) > 0 {
+		version = ""
+	}
+	recordDownloadVersion(docToken, outputPath, version)
+
 	if len(failedAssets) > 0 {
 		total := len(parser.ImgTokens) + len(parser.FileTokens)
 		fmt.Printf("\n⚠ %d/%d 张图片/附件下载失败\n", len(failedAssets), total)
@@ -219,6 +223,34 @@ func downloadDocument(ctx context.Context, client *core.Client, url string, opts
 
 func isPermissionError(err error) bool {
 	return core.IsPermissionError(err)
+}
+
+// lookupDownloadRecord 查询下载版本边车中 documentID 在 outputDir 下的记录；无记录或任何失败返回 nil。
+func lookupDownloadRecord(documentID, outputDir string) *core.DownloadRecord {
+	cp, err := core.DefaultCachePaths()
+	if err != nil {
+		return nil
+	}
+	absDir, err := filepath.Abs(outputDir)
+	if err != nil {
+		return nil
+	}
+	return core.LookupDownloadRecord(cp, documentID, absDir)
+}
+
+// recordDownloadVersion 把本次下载写入版本边车（best-effort，失败仅告警不影响下载结果）。
+func recordDownloadVersion(documentID, outputPath, version string) {
+	cp, err := core.DefaultCachePaths()
+	if err != nil {
+		return
+	}
+	absPath, err := filepath.Abs(outputPath)
+	if err != nil {
+		return
+	}
+	if err := core.RecordDownloadVersion(cp, documentID, absPath, version); err != nil {
+		log.Printf("警告: 记录下载版本失败: %v", err)
+	}
 }
 
 func downloadDocuments(ctx context.Context, client *core.Client, url string) error {

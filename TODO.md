@@ -8,7 +8,7 @@
     - [ ] 使用外部文件 (eg: xlsx -> md)转 markdown 的方案，不自己使用 sheet 相关接口去拼接 markdown
 - [x] 支持 增量更新、跳过已下载文件
   - [x] image
-  - [x] 文档本体：下载时在 frontmatter 落 `version` 标记（Wiki 用 `obj_edit_time.revision_id`，普通 docx 用 `revision_id`，见 `DownloadVersion`），重复下载时本地标记与远程一致 → 跳过拉块与素材（仅一次轻量 GetDocxDocument）；`--force` 强制重新下载。已知限制：普通 docx 的纯白板编辑不更新 revision_id，感知不到（Wiki 不受影响，obj_edit_time 覆盖白板）
+  - [x] 文档本体：中心化边车 `<UserCacheDir>/feishu2md/downloads/<document_id>.yaml`（`download_manifest.go`，可重建缓存故走 `CachePaths` 而非 boards/media 的 `StatePaths`）记录「输出目录 → 产物路径 + 远程版本」，版本取 Wiki `obj_edit_time.revision_id` / 普通 docx `revision_id`（见 `DownloadVersion`）。重复下载时记录与远程一致且产物仍在 → 跳过拉块与素材（仅一次轻量 GetDocxDocument）；`--force` 强制重新下载。用户文件零污染（frontmatter 仍只有 `source`）。已知限制：普通 docx 的纯白板编辑不更新 revision_id，感知不到（Wiki 不受影响，obj_edit_time 覆盖白板）
 - [ ] 支持 follow (比如文档中有引用其他文档的链接，自动下载)
 - [x] 记录/展示 diff?
 - [x] 支持白板

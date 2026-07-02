@@ -256,43 +256,7 @@ func TestGenerateFrontMatter(t *testing.T) {
 		if !strings.Contains(result, "source: https://feishu.cn/docx/abc123\n") {
 			t.Errorf("应包含 source 字段，实际: %s", result)
 		}
-		if strings.Contains(result, "version:") {
-			t.Errorf("空 Version 不应输出 version 字段（向后兼容），实际: %s", result)
-		}
 	})
-
-	t.Run("带 version 的 frontmatter 可 round-trip", func(t *testing.T) {
-		fm := FrontMatter{
-			Source:  "https://feishu.cn/wiki/abc123",
-			Version: "1700000000.42",
-		}
-		result := GenerateFrontMatter(fm)
-		// yaml 对类数字字符串会加引号，只断言字段存在
-		if !strings.Contains(result, "version: \"1700000000.42\"\n") {
-			t.Errorf("应包含 version 字段，实际: %s", result)
-		}
-
-		content := "# 标题\n\n正文\n\n" + result
-		parsed, body, err := ParseFrontMatter(content)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if parsed == nil || parsed.Source != fm.Source || parsed.Version != fm.Version {
-			t.Errorf("round-trip 失败: %+v", parsed)
-		}
-		if strings.Contains(body, "version:") {
-			t.Errorf("正文不应包含 frontmatter 内容: %q", body)
-		}
-	})
-}
-
-func TestDownloadVersion(t *testing.T) {
-	if got := DownloadVersion("", 42); got != "42" {
-		t.Errorf("非 Wiki 文档应仅用 revision_id，实际: %q", got)
-	}
-	if got := DownloadVersion("1700000000", 42); got != "1700000000.42" {
-		t.Errorf("Wiki 文档应拼接 obj_edit_time 与 revision_id，实际: %q", got)
-	}
 }
 
 func TestExtractHeadingsFromMarkdown(t *testing.T) {
@@ -322,55 +286,6 @@ func TestLocalDocMeta(t *testing.T) {
 	if len(meta.Headings) != 1 || meta.Headings[0].Text != "章节一" {
 		t.Errorf("Headings = %+v", meta.Headings)
 	}
-}
-
-func TestFindLocalFileByToken(t *testing.T) {
-	writeDoc := func(t *testing.T, dir, name, token, version string) string {
-		t.Helper()
-		fm := FrontMatter{Source: "https://feishu.cn/wiki/" + token, Version: version}
-		content := "# 标题\n\n正文\n\n" + GenerateFrontMatter(fm)
-		path := filepath.Join(dir, name)
-		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
-			t.Fatal(err)
-		}
-		return path
-	}
-
-	t.Run("快路径: token 命名", func(t *testing.T) {
-		dir := t.TempDir()
-		want := writeDoc(t, dir, "Token123.md", "Token123", "42")
-		path, fm, body := FindLocalFileByToken(dir, "Token123", "", OutputConfig{})
-		if path != want || fm == nil || fm.Version != "42" || !strings.Contains(body, "正文") {
-			t.Errorf("path=%q fm=%+v", path, fm)
-		}
-	})
-
-	t.Run("快路径: 标题命名", func(t *testing.T) {
-		dir := t.TempDir()
-		want := writeDoc(t, dir, "我的文档.md", "Token123", "42")
-		path, fm, _ := FindLocalFileByToken(dir, "Token123", "我的文档", OutputConfig{TitleAsFilename: true})
-		if path != want || fm == nil {
-			t.Errorf("path=%q fm=%+v", path, fm)
-		}
-	})
-
-	t.Run("慢路径: 文件名与推算不符时扫描目录", func(t *testing.T) {
-		dir := t.TempDir()
-		want := writeDoc(t, dir, "改过名的文件.md", "Token123", "42")
-		writeDoc(t, dir, "其它文档.md", "OtherToken", "1")
-		path, fm, _ := FindLocalFileByToken(dir, "Token123", "", OutputConfig{TitleAsFilename: true})
-		if path != want || fm == nil {
-			t.Errorf("path=%q fm=%+v", path, fm)
-		}
-	})
-
-	t.Run("未找到", func(t *testing.T) {
-		dir := t.TempDir()
-		path, fm, body := FindLocalFileByToken(dir, "Nope", "", OutputConfig{})
-		if path != "" || fm != nil || body != "" {
-			t.Errorf("应返回零值: path=%q fm=%+v", path, fm)
-		}
-	})
 }
 
 func TestDocsIndexAddDoc(t *testing.T) {

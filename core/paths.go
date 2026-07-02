@@ -79,6 +79,14 @@ func (p CachePaths) FilesDir() string { return filepath.Join(p.base, "files") }
 // WhiteboardsDir 返回白板缓存目录 <base>/whiteboards。
 func (p CachePaths) WhiteboardsDir() string { return filepath.Join(p.base, "whiteboards") }
 
+// DownloadsDir 返回下载版本记录目录 <base>/downloads。
+func (p CachePaths) DownloadsDir() string { return filepath.Join(p.base, "downloads") }
+
+// DownloadManifestFile 按 document_id 定位下载版本记录 <base>/downloads/<document_id>.yaml。
+func (p CachePaths) DownloadManifestFile(documentID string) string {
+	return filepath.Join(p.DownloadsDir(), documentID+".yaml")
+}
+
 // publishKey 计算 target 路径的稳定 key：先 filepath.Clean 归一，再取 sha256 全量 hex。
 // 用 hash 而非编码原路径，天然消除空格/中文/分隔符等特殊字符问题。
 // 注意：调用方负责先转绝对路径（filepath.Abs 依赖 cwd，属不确定来源，留在外壳层）。
