@@ -6,7 +6,6 @@ import (
 	"log"
 	"os"
 	"strings"
-	"time"
 
 	"github.com/amzyang/larkdown/core"
 	"github.com/urfave/cli/v3"
@@ -20,10 +19,11 @@ var globalOpts = struct {
 	clientOpts *core.ClientOptions
 }{}
 
-// createClientFromConfig 从配置文件创建客户端，处理 token 刷新和降级逻辑
+// createClientFromConfig 从配置文件创建客户端，处理 token 刷新和降级逻辑。
+// 认证相关提示一律走 stderr，避免污染可管道化的 stdout 输出。
 func createClientFromConfig(ctx context.Context, config *core.Config, configPath string) *core.Client {
 	if config.Feishu.HasValidUserToken() {
-		fmt.Println("使用认证方式: user_access_token")
+		fmt.Fprintln(os.Stderr, "使用认证方式: user_access_token")
 		return core.NewClientWithUserToken(
 			config.Feishu.AppId,
 			config.Feishu.AppSecret,
@@ -32,33 +32,34 @@ func createClientFromConfig(ctx context.Context, config *core.Config, configPath
 		)
 	}
 	if config.Feishu.NeedsRefresh() {
-		fmt.Println("Token 已过期，正在刷新...")
+		fmt.Fprintln(os.Stderr, "Token 已过期，正在刷新...")
 		oauthMgr := core.NewOAuthManager(
 			config.Feishu.AppId,
 			config.Feishu.AppSecret,
 			core.DefaultOAuthPort,
 			globalOpts.clientOpts,
 		)
-		result, err := oauthMgr.RefreshUserToken(ctx, config.Feishu.RefreshToken)
-		if err == nil {
-			config.Feishu.UserAccessToken = result.UserAccessToken
-			config.Feishu.RefreshToken = result.RefreshToken
-			config.Feishu.TokenExpireTime = time.Now().Unix() + result.ExpiresIn
-			if err := config.WriteConfig2File(configPath); err != nil {
-				log.Printf("warning: failed to save config: %v", err)
+		outcome, err := core.EnsureFreshUserToken(ctx, config, configPath, oauthMgr)
+		switch outcome {
+		case core.RefreshOutcomeRefreshed, core.RefreshOutcomeRefreshedByOther:
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "warning: %v\n", err)
 			}
-			fmt.Println("Token 刷新成功")
-			fmt.Println("使用认证方式: user_access_token")
+			fmt.Fprintln(os.Stderr, "Token 刷新成功")
+			fmt.Fprintln(os.Stderr, "使用认证方式: user_access_token")
 			return core.NewClientWithUserToken(
 				config.Feishu.AppId,
 				config.Feishu.AppSecret,
-				result.UserAccessToken,
+				config.Feishu.UserAccessToken,
 				globalOpts.clientOpts,
 			)
+		case core.RefreshOutcomeTokenInvalidCleared:
+			fmt.Fprintf(os.Stderr, "user_access_token 已失效（%v），请重新执行 larkdown login；本次使用应用凭证 (tenant_access_token)\n", err)
+		case core.RefreshOutcomeTransientFailure:
+			fmt.Fprintf(os.Stderr, "刷新 token 失败（网络波动？%v），本次使用应用凭证；token 保留，下次自动重试\n", err)
 		}
-		fmt.Printf("刷新 token 失败，将使用应用凭证: %v\n", err)
 	}
-	fmt.Println("使用认证方式: tenant_access_token (应用凭证)")
+	fmt.Fprintln(os.Stderr, "使用认证方式: tenant_access_token (应用凭证)")
 	return core.NewClient(config.Feishu.AppId, config.Feishu.AppSecret, globalOpts.clientOpts)
 }
 
