@@ -94,7 +94,7 @@ core/          # 核心业务逻辑
   docmeta.go   # 文档元信息、目录索引（llms.txt / docs_map.md）、FrontMatter 解析
   cache.go     # 图片缓存（~/.cache/feishu2md/images/）
   config.go    # 配置管理（~/.config/feishu2md/config.json）
-  oauth.go     # OAuth 流程管理（授权 URL、code 换 token、刷新 token）
+  oauth.go     # OAuth 设备码流程（device flow）：申请设备码、轮询换 token、v2 刷新、token 撤销（纯裸 HTTP）
   comment.go   # 文档评论获取与 Markdown 渲染（--comments 选项）
 
 utils/         # URL 校验与 token 提取、文件名清理
@@ -165,7 +165,7 @@ git merge upstream/master
 | 方式                | 说明                               | 使用场景                 |
 | ------------------- | ---------------------------------- | ------------------------ |
 | tenant_access_token | 应用级认证，使用 AppID + AppSecret | 默认方式，适合批量自动化 |
-| user_access_token   | 用户级认证，通过 OAuth 登录获取    | 访问用户个人有权限的文档 |
+| user_access_token   | 用户级认证，通过 OAuth 设备码流程登录获取 | 访问用户个人有权限的文档 |
 
 **使用流程**：
 
@@ -173,8 +173,11 @@ git merge upstream/master
 # 1. 配置应用凭证
 larkdown config --appId <id> --appSecret <secret>
 
-# 2. (可选) OAuth 登录获取 user_access_token（旧命令 larkdown login 仍作隐藏别名可用）
+# 2. (可选) OAuth 设备码流程登录获取 user_access_token（旧命令 larkdown login 仍作隐藏别名可用）
+#    打印 verification URL + user code（并尽力自动打开浏览器），授权后阻塞轮询直到完成；无需本地回调 server
 larkdown auth login
+#    两段式（agent/CI/无头友好）：先 --no-wait 立即返回 device_code+URL，人授权后再 --device-code 换令牌；--json 输出机读事件
+#    larkdown auth login --no-wait --json  然后  larkdown auth login --device-code <code> --json
 
 # 3. 下载文档（优先使用 user_access_token，过期自动刷新，失败降级到应用凭证）
 larkdown download <url>
@@ -188,10 +191,11 @@ larkdown auth logout
 
 ### OAuth 配置要求
 
-使用 `larkdown auth login` 需要在飞书开放平台配置重定向 URL：
+`larkdown auth login` 走 OAuth 2.0 设备码流程（device flow），**无需配置重定向 URL、无需本地回调 server**（原 `http://localhost:9999/callback` 不再需要）：
 
-- 进入应用 -> 安全设置 -> 重定向 URL
-- 添加 `http://localhost:9999/callback`
+- 进入应用 -> 安全设置，确认已**启用「设备码授权 / Device Flow」能力**（否则申请设备码会直接报错）
+- 确认「必需的飞书权限」已开通/审批（设备码申请携带的 scope 需与之匹配）
+- 兼容性：隐藏别名 `larkdown login` 与已废弃的 `--port` flag 仍保留（`--port` 为 no-op，不打断老脚本）
 
 ### 必需的飞书权限
 

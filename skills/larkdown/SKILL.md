@@ -162,12 +162,23 @@ cat image.jpg | larkdown ocr - # 从 stdin 读取
 认证管理命令组：`login` / `status` / `logout`。
 
 ```bash
-larkdown auth login [--port 9999]   # OAuth 登录获取 user_access_token
+larkdown auth login                 # OAuth 设备码流程登录获取 user_access_token
 larkdown auth status                # 查看认证状态（只读，不触发刷新）
 larkdown auth logout                # 撤销并清除本地 user_access_token
 ```
 
-`auth login` 打开浏览器进行飞书授权，成功后自动保存凭证，`--port` 指定本地回调服务器端口（默认 9999）。`auth status` 打印配置路径、app_id 与当前认证方式（user token 有效时展示用户身份）。`auth logout` best-effort 撤销远端 token 并清空本地凭证，回落应用凭证。
+`auth login` 走 OAuth 2.0 设备码流程：打印授权 URL + 验证码（尽力自动打开浏览器），用户在任意设备完成授权后阻塞轮询直到成功并自动保存凭证——无需本地回调 server、无需重定向 URL 配置，适配无头环境。`auth status` 打印配置路径、app_id 与当前认证方式（user token 有效时展示用户身份与刷新令牌有效期）。`auth logout` best-effort 撤销远端 token 并清空本地凭证，回落应用凭证。`--port` flag 已废弃为 no-op（仅兼容老脚本）。
+
+**两段式登录（agent / CI / 无头环境）**：设备码流程默认阻塞轮询最长约 10 分钟，不适合「只能发一次消息」的 agent。用下面两步拆开——第一步立即返回、把 URL 交给人；人授权后再跑第二步换令牌：
+
+```bash
+# 1) 申请设备码并立即返回（不轮询），把 verification_uri_complete 展示给用户去授权
+larkdown auth login --no-wait --json      # 输出 {"event":"device_authorization","device_code":...,"verification_uri_complete":...}
+# 2) 用户授权后，用上一步的 device_code 恢复轮询、换取并保存令牌
+larkdown auth login --device-code <device_code> --json   # 成功输出 {"event":"authorized",...}
+```
+
+`--no-wait` 与 `--device-code` 互斥；`--json` 让每步输出单行 JSON 事件（`device_authorization` / `authorized`）便于程序解析。不带 `--json` 则输出人类可读文本（`--no-wait` 会附上可直接复制的 `larkdown auth login --device-code <code>` 恢复命令）。
 
 > 旧命令 `larkdown login` 仍作为 `larkdown auth login` 的隐藏别名保留。
 
@@ -189,7 +200,7 @@ larkdown config --appId xxx --appSecret xxx  # 设置凭证
 ## 注意事项
 
 - 下载支持 Docx、Wiki、电子表格（Sheet）、多维表格（Bitable）；不支持 Slides（幻灯片）
-- Token 过期后自动刷新；刷新失败时回退到应用身份（tenant_access_token）
+- 登录走 OAuth 2.0 设备码流程；access_token 过期自动刷新（v2 端点 + 跨进程锁），refresh_token 默认约 7 天，过期后需重新 `larkdown auth login`，刷新失败回退应用身份（tenant_access_token）
 - 调试时可加 `--debug` 全局 flag 查看 HTTP 请求日志，详见 [高级用法](references/advanced-usage.md#调试)
 
 如需了解权限配置和常见问题，参阅 [高级用法](references/advanced-usage.md)。

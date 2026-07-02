@@ -14,10 +14,10 @@ brew install amzyang/tap/larkdown
 ### 首次设置
 
 1. 在[飞书开放平台](https://open.feishu.cn/)创建应用，获取 App ID 和 App Secret
-2. 在应用设置中添加重定向 URL：`http://localhost:9999/callback`（安全设置 → 重定向 URL）
+2. 在应用设置中启用「设备码授权 / Device Flow」能力（安全设置）——登录走设备码流程，无需配置重定向 URL
 3. 打开开发配置/权限管理，批量导入权限：[permissions.json](https://raw.githubusercontent.com/amzyang/larkdown/main/permissions.json)
 4. 配置应用凭证：`larkdown config --appId cli_xxxxx --appSecret xxxxx`
-5. OAuth 登录：`larkdown auth login`（浏览器会打开飞书授权页面，授权后自动保存凭证；旧命令 `larkdown login` 仍作隐藏别名可用）
+5. OAuth 登录：`larkdown auth login`（打印授权 URL + 验证码并尽力打开浏览器，授权后自动保存凭证；旧命令 `larkdown login` 仍作隐藏别名可用）
 
 ## 配置文件
 
@@ -28,27 +28,46 @@ brew install amzyang/tap/larkdown
 - `~/.config/feishu2md/config.json`（Linux / macOS XDG）
 - `~/Library/Application Support/feishu2md/config.json`（macOS）
 
-示例内容：
+示例内容（认证字段嵌套在 `feishu` 段下；另有 `output` 段控制下载排版，此处省略）：
 
 ```json
 {
-  "app_id": "cli_xxxxx",
-  "app_secret": "xxxxx",
-  "access_token": "xxxxx",
-  "refresh_token": "xxxxx",
-  "token_expire_time": 1234567890
+  "feishu": {
+    "app_id": "cli_xxxxx",
+    "app_secret": "xxxxx",
+    "user_access_token": "u-xxxxx",
+    "refresh_token": "xxxxx",
+    "token_expire_time": 1751430000,
+    "refresh_token_expire_time": 1752030000
+  }
 }
 ```
 
+其中 `token_expire_time` / `refresh_token_expire_time` 为 access_token / refresh_token 的过期时刻（Unix 秒），由设备码登录与刷新自动写入。文件权限固定 0600（含 secret/token，仅属主可读写）。
+
 ## 认证机制
 
-Token 选择优先级：
+登录走 **OAuth 2.0 设备码流程（device flow）**：`larkdown auth login` 申请设备码、展示授权 URL + 验证码（尽力打开浏览器），用户在任意设备完成授权后轮询换取 `user_access_token` + `refresh_token`，并记录各自过期时刻（`token_expire_time` / `refresh_token_expire_time`）。无需本地回调 server、无需重定向 URL 配置。
+
+每次命令的 token 选择优先级：
 
 1. `user_access_token` 有效（未过期，含 5 分钟缓冲）→ 直接使用
-2. Token 过期但 `refresh_token` 存在 → 自动刷新，保存新 token
-3. 刷新失败或无 token → 回退到 `tenant_access_token`（仅应用身份）
+2. access 过期但 `refresh_token` 未过期 → 自动刷新（跨进程加锁防轮换式 refresh_token 被并发打翻，走 v2 `oauth/token` 端点），保存新 token
+3. `refresh_token` 也已过期（默认约 7 天）或刷新被判定确定性失效（如 `invalid_grant`）→ 清除本地 token 并提示重新 `larkdown auth login`，本次回退 `tenant_access_token`
+4. 无 user token → 直接用 `tenant_access_token`（仅应用身份）
 
-使用用户身份时，能访问用户有权限的所有文档。应用身份则需要文档显式授权给应用。
+`larkdown auth status` 只读展示当前身份、access 与刷新令牌的有效期（不触发刷新）。使用用户身份能访问用户有权限的所有文档；应用身份则需文档显式授权给应用。
+
+### 无头 / 自动化登录（agent / CI / claude code）
+
+设备码流程默认阻塞轮询最长约 10 分钟，不适合「一次调用只能发一条消息」的 agent。用两段式拆开——第一步立即返回、把授权 URL 交给人；人授权后再跑第二步换令牌：
+
+```bash
+larkdown auth login --no-wait --json                     # 立即返回 device_code + 授权 URL，不轮询
+larkdown auth login --device-code <device_code> --json   # 用户授权后换取并保存令牌
+```
+
+`--json` 让每步输出单行 JSON 事件（`device_authorization` / `authorized`）便于解析；`--no-wait` 与 `--device-code` 互斥。不带 `--json` 时 `--no-wait` 会附上可直接复制的 `larkdown auth login --device-code <code>` 恢复命令。
 
 ## 飞书应用权限
 
@@ -106,13 +125,17 @@ larkdown --debug dl "https://example.feishu.cn/docx/xxx" -o /tmp/output
 
 ## 常见问题
 
+### 登录失败 / 申请设备码失败
+
+若 `larkdown auth login` 提示「申请设备码失败」，多为飞书应用未启用「设备码授权 / Device Flow」能力（开放平台 → 安全设置），或所需权限未开通/审批。启用能力、开通权限后重试。设备码流程无需配置重定向 URL。
+
 ### 下载失败提示权限不足
 
 检查当前用户是否有权限访问目标文档。使用 `larkdown auth login` 确保以正确的用户身份登录，`larkdown auth status` 可查看当前登录身份。
 
 ### Token 过期
 
-larkdown 会自动刷新 token。如果刷新失败，重新运行 `larkdown auth login`。
+access_token 过期会自动刷新（无需干预）。refresh_token 默认约 7 天有效，过期后需重新 `larkdown auth login`；`larkdown auth status` 可查看刷新令牌到期时间。若提示「请重新执行 larkdown auth login」，即 refresh_token 已失效（过期 / 被撤销 / 从旧授权码流程遗留），重新登录即可。
 
 ### 图片下载失败
 
