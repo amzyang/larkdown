@@ -37,12 +37,27 @@ func TestNormalizeMarkdown(t *testing.T) {
 		{
 			name:  "bullet list",
 			input: "- item 1\n- item 2\n- item 3\n",
-			want:  "- item 1\n\n- item 2\n\n- item 3\n",
+			want:  "- item 1\n- item 2\n- item 3\n",
 		},
 		{
 			name:  "ordered list",
 			input: "1. first\n2. second\n3. third\n",
-			want:  "1. first\n\n2. second\n\n3. third\n",
+			want:  "1. first\n2. second\n3. third\n",
+		},
+		{
+			name:  "ordered list with nested sublist",
+			input: "1. 步骤一\n2. 步骤二\n3. 步骤三\n   1. 子项一\n   2. 子项二\n",
+			want:  "1. 步骤一\n2. 步骤二\n3. 步骤三\n\t1. 子项一\n\t2. 子项二\n",
+		},
+		{
+			name:  "bullet list with nested sublist",
+			input: "- item 1\n- item 2\n  - sub 1\n  - sub 2\n",
+			want:  "- item 1\n- item 2\n\t- sub 1\n\t- sub 2\n",
+		},
+		{
+			name:  "mixed list and paragraph keep blank line",
+			input: "para\n\n- item 1\n- item 2\n\n1. first\n2. second\n",
+			want:  "para\n\n- item 1\n- item 2\n\n1. first\n2. second\n",
 		},
 	}
 

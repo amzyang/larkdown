@@ -338,27 +338,34 @@ func (p *Parser) ParseDocxBlockPage(b *lark.DocxBlock) string {
 	buf.WriteString(p.ParseDocxBlockText(b.Page))
 	buf.WriteString("\n")
 
-	for i, childId := range b.Children {
-		childBlock := p.blockMap[childId]
-		buf.WriteString(p.ParseDocxBlock(childBlock, 0))
-
-		if i == len(b.Children)-1 {
-			continue
-		}
-		next := p.blockMap[b.Children[i+1]]
-		// 相邻同族 list 块之间用 tight 分隔（仅块自身末尾的 \n），
-		// 让下载产物粘贴回飞书 Wiki 时不产生幽灵空段落。
-		if isSameFamilyList(childBlock, next) {
-			continue
-		}
-		buf.WriteString("\n")
-	}
+	buf.WriteString(p.parseSiblingBlocks(b.Children))
 
 	result := buf.String()
 	if !strings.HasSuffix(result, "\n") {
 		result += "\n"
 	}
 	return result
+}
+
+// parseSiblingBlocks 渲染一组相邻顶层块。相邻同族 list 块之间用 tight 分隔
+// （仅块自身末尾的 \n），让下载产物粘贴回飞书 Wiki 时不产生幽灵空段落；
+// 其余相邻块之间加空行形成段落分隔。NormalizeMarkdown 复用此逻辑保证
+// diff 时本地规范化产物与远端下载产物排版对称。
+func (p *Parser) parseSiblingBlocks(childIDs []string) string {
+	buf := new(strings.Builder)
+	for i, childId := range childIDs {
+		childBlock := p.blockMap[childId]
+		buf.WriteString(p.ParseDocxBlock(childBlock, 0))
+
+		if i == len(childIDs)-1 {
+			continue
+		}
+		if isSameFamilyList(childBlock, p.blockMap[childIDs[i+1]]) {
+			continue
+		}
+		buf.WriteString("\n")
+	}
+	return buf.String()
 }
 
 func isSameFamilyList(a, b *lark.DocxBlock) bool {
