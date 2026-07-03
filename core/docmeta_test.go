@@ -167,6 +167,35 @@ func TestGenerateDocsMap(t *testing.T) {
 	}
 }
 
+func TestGenerateIndexRefsSection(t *testing.T) {
+	idx := NewDocsIndex("TestWiki", "/tmp/test")
+	idx.AddDoc(DocMeta{Title: "文档一", RelPath: "doc1.md"}, "/tmp/test")
+
+	// 无 refs 时两个生成器都不输出该节（存量镜像零 diff）
+	if strings.Contains(GenerateLlmsTxt(idx), "引用文档") {
+		t.Errorf("空 Refs 时 llms.txt 不应有引用文档节")
+	}
+	if strings.Contains(GenerateDocsMap(idx), "引用文档") {
+		t.Errorf("空 Refs 时 docs_map.md 不应有引用文档节")
+	}
+
+	idx.AddRef(RefDoc{Title: "API 设计规范", RelPath: "_refs/API设计规范.md",
+		SourceURL: "https://x.feishu.cn/docx/TokA"})
+
+	wantEntry := "- [API 设计规范](_refs/API设计规范.md) ← <https://x.feishu.cn/docx/TokA>\n"
+	for name, result := range map[string]string{
+		"llms.txt":    GenerateLlmsTxt(idx),
+		"docs_map.md": GenerateDocsMap(idx),
+	} {
+		if !strings.Contains(result, "\n## 引用文档 (_refs)\n\n") {
+			t.Errorf("%s 缺少引用文档节标题", name)
+		}
+		if !strings.Contains(result, wantEntry) {
+			t.Errorf("%s 缺少引用文档条目:\n%s", name, result)
+		}
+	}
+}
+
 func TestEscapeMarkdownLink(t *testing.T) {
 	tests := []struct {
 		input    string

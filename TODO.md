@@ -9,7 +9,8 @@
 - [x] 支持 增量更新、跳过已下载文件
   - [x] image
   - [x] 文档本体：中心化边车 `<UserCacheDir>/feishu2md/downloads/<document_id>.yaml`（`download_manifest.go`，可重建缓存故走 `CachePaths` 而非 boards/media 的 `StatePaths`）记录「输出目录 → 产物路径 + 远程版本」，版本取 Wiki `obj_edit_time.revision_id` / 普通 docx `revision_id`（见 `DownloadVersion`）。重复下载时记录与远程一致且产物仍在 → 跳过拉块与素材（仅一次轻量 GetDocxDocument）；`--force` 强制重新下载。用户文件零污染（frontmatter 仍只有 `source`）。已知限制：普通 docx 的纯白板编辑不更新 revision_id，感知不到（Wiki 不受影响，obj_edit_time 覆盖白板）
-- [ ] 支持 follow (比如文档中有引用其他文档的链接，自动下载)
+- [x] 支持 follow (比如文档中有引用其他文档的链接，自动下载)
+  - download/mirror 加 `--follow` + `--follow-depth`（默认 1）：BFS 下载正文 @mention 与行内链接引用的 docx/wiki 文档到 `_refs/`，token 去重防环、树内互引不重复进 `_refs`（seen 同时记 NodeToken 与 ObjToken——飞书把 wiki @mention 解析为 ObjToken）；正文零改写（round-trip 安全）；mirror 索引加「引用文档 (_refs)」映射节、`.larkdown-mirror.yaml` 记录 follow 配置（无参重同步沿用；refs 随下载版本边车持久化，skip-unchanged 路径直接回放而非从产物反解，保证 prune 不误删 `_refs/`；旧记录缺 refs 时 --follow 重下一次补录）；follow 失败 warn 继续、不阻止 prune。已知限制：mirror 树外的同一 wiki 文档被 node-token 与 ObjToken 两种 URL 同时引用时会重复下载一次（同名覆盖，无正确性影响）
 - [x] 记录/展示 diff?
 - [x] 支持白板
 - [x] debug mode

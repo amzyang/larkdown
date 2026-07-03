@@ -19,6 +19,8 @@ type Parser struct {
 	useHTMLTags bool
 	ImgTokens   []string
 	FileTokens  []string
+	RefDocs     []DocRef // 正文引用的其他 docx/wiki 文档（@文档 mention / 行内链接），--follow 消费
+	refSeen     map[string]bool
 	blockMap    map[string]*lark.DocxBlock
 	Headings    []Heading         // from HEAD: 收集的标题（扁平列表）
 	ctx         context.Context   // from 0182
@@ -35,6 +37,7 @@ func NewParser(config OutputConfig, client *Client) *Parser {
 		useHTMLTags: config.UseHTMLTags,
 		ImgTokens:   make([]string, 0),
 		FileTokens:  make([]string, 0),
+		refSeen:     make(map[string]bool),
 		blockMap:    make(map[string]*lark.DocxBlock),
 		Headings:    make([]Heading, 0),
 		ctx:         context.Background(),
@@ -65,6 +68,15 @@ func (p *Parser) SetObjEditTime(objEditTime string) {
 // SetUserNames sets the MentionUser OpenID → display name mapping
 func (p *Parser) SetUserNames(m map[string]string) {
 	p.userNames = m
+}
+
+// collectRef 旁路收集正文中的文档引用（按 token 去重），不影响渲染输出。
+func (p *Parser) collectRef(ref DocRef, ok bool) {
+	if !ok || p.refSeen[ref.Token] {
+		return
+	}
+	p.refSeen[ref.Token] = true
+	p.RefDocs = append(p.RefDocs, ref)
 }
 
 // =============================================================
@@ -448,6 +460,9 @@ func (p *Parser) ParseDocxTextElement(e *lark.DocxTextElement, inline bool) stri
 	}
 	if e.MentionDoc != nil {
 		buf.WriteString(renderMentionDoc(e.MentionDoc))
+		p.collectRef(DocRefFromMention(e.MentionDoc.Token,
+			mentionObjTypeString(e.MentionDoc.ObjType),
+			utils.UnescapeURL(e.MentionDoc.URL), e.MentionDoc.Title))
 	}
 	if e.Equation != nil {
 		symbol := "$$"
@@ -473,6 +488,7 @@ func (p *Parser) ParseDocxTextElementTextRun(tr *lark.DocxTextElementTextRun) st
 			if link := style.Link; link != nil {
 				openers = append(openers, "[")
 				closers = append(closers, fmt.Sprintf("](%s)", utils.UnescapeURL(link.URL)))
+				p.collectRef(DocRefFromLink(utils.UnescapeURL(link.URL), tr.Content))
 			}
 			if style.Bold {
 				if p.useHTMLTags {

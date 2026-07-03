@@ -16,9 +16,13 @@ import (
 // 记录同步来源 URL，供 `larkdown mirror`（无参数）在镜像目录内重新同步。
 const MirrorManifestFilename = ".larkdown-mirror.yaml"
 
-// MirrorManifest 镜像元数据
+// MirrorManifest 镜像元数据。
+// Follow/FollowDepth 记录上次同步的 --follow 配置，无参重同步时沿用，
+// 避免某次忘带 --follow 导致 _refs/ 被当作陈旧文档清理；旧 yaml 无这两键，零值 = 关。
 type MirrorManifest struct {
-	Source string `yaml:"source"`
+	Source      string `yaml:"source"`
+	Follow      bool   `yaml:"follow,omitempty"`
+	FollowDepth int    `yaml:"follow_depth,omitempty"`
 }
 
 // ReadMirrorManifest 读取镜像目录下的元数据边车；文件不存在返回 (nil, nil)。
@@ -49,7 +53,8 @@ func WriteMirrorManifest(dir string, m *MirrorManifest) error {
 // GenerateMirrorClaudeMd 生成镜像根目录的 CLAUDE.md 内容，
 // 向 Claude Code 说明镜像性质（单向只读）与索引文件（llms.txt / docs_map.md）的用法。
 // 内容刻意不含时间戳，保证内容未变时重复同步零 diff。
-func GenerateMirrorClaudeMd(rootName, sourceURL string) string {
+// follow 为 true 时补充 _refs/ 目录（--follow 下载的被引用文档）的说明。
+func GenerateMirrorClaudeMd(rootName, sourceURL string, follow bool) string {
 	var buf strings.Builder
 	buf.WriteString(fmt.Sprintf("# %s（飞书文档镜像）\n\n", rootName))
 	buf.WriteString("此目录是飞书文档的**只读镜像**，由 `larkdown mirror` 单向同步（仅下载）生成。\n")
@@ -61,13 +66,20 @@ func GenerateMirrorClaudeMd(rootName, sourceURL string) string {
 	buf.WriteString("| `llms.txt` | 全部文档的扁平列表（标题 + 相对路径），适合按标题快速定位文档 |\n")
 	buf.WriteString("| `docs_map.md` | 文档地图：目录树 + 每篇文档的标题（heading）层级结构，适合了解全局结构与按章节定位 |\n")
 	buf.WriteString("| `CLAUDE.md` | 本说明文件 |\n")
-	buf.WriteString("| `" + MirrorManifestFilename + "` | 镜像元数据（同步来源 URL） |\n\n")
-	buf.WriteString("## 查阅建议\n\n")
+	buf.WriteString("| `" + MirrorManifestFilename + "` | 镜像元数据（同步来源 URL） |\n")
+	if follow {
+		buf.WriteString("| `_refs/` | 正文引用的镜像外文档（`--follow` 下载），frontmatter 记录原始 URL |\n")
+	}
+	buf.WriteString("\n## 查阅建议\n\n")
 	buf.WriteString("1. 先看 `llms.txt` 按标题定位目标文档，再读对应 `.md` 文件\n")
 	buf.WriteString("2. 需要了解知识库整体结构或按章节检索时，查 `docs_map.md`\n")
 	buf.WriteString("3. 每个 `.md` 文件末尾的 HTML 注释 frontmatter 记录了 `source:` 原文档 URL；" +
 		"可用 `larkdown open <file.md>` 在浏览器打开原文档\n")
 	buf.WriteString("4. 图片与附件下载在文档同级的资源目录中，`.md` 内为相对路径引用\n")
+	if follow {
+		buf.WriteString("5. 正文中引用的镜像外文档在 `_refs/`；" +
+			"`llms.txt` / `docs_map.md` 的「引用文档 (_refs)」一节记录本地路径与原始 URL 的对应\n")
+	}
 	return buf.String()
 }
 

@@ -96,6 +96,8 @@ larkdown 根据 URL 路径自动识别类型，不需要额外 flag：
 | `-r, --recursive` | 递归下载子节点                                              | false  |
 | `-c, --comments`  | 包含文档评论                                                | true   |
 | `--no-diff`       | 禁用变更 diff 输出（默认下载时会显示与本地已有文件的 diff） | false  |
+| `--follow`        | 同时下载正文引用（@提及/链接）的 docx/wiki 文档到 `_refs/`  | false  |
+| `--follow-depth`  | 引用追踪层数（需配合 `--follow`）                           | 1      |
 
 当传入本地 .md 文件路径时，larkdown 会从文件 frontmatter 的 `source` 字段读取原始 URL 并重新下载，输出目录默认为该文件所在目录。
 
@@ -110,8 +112,10 @@ larkdown 根据 URL 路径自动识别类型，不需要额外 flag：
 | `-c, --comments` | 包含文档评论                                               | true   |
 | `-f, --force`    | 强制重新下载未变化的文档                                   | false  |
 | `--no-prune`     | 保留远端已删除的本地文件（跳过清理）                       | false  |
+| `--follow`       | 同时下载正文引用（@提及/链接）的镜像外 docx/wiki 文档到 `_refs/`；配置记入边车，重同步自动沿用 | false  |
+| `--follow-depth` | 引用追踪层数（需配合 `--follow`）                          | 1      |
 
-镜像目录中会生成：`llms.txt`（扁平文档列表）、`docs_map.md`（目录树 + 标题结构文档地图）、`CLAUDE.md`（面向 Agent 的镜像说明）、`.larkdown-mirror.yaml`（同步来源记录）。
+镜像目录中会生成：`llms.txt`（扁平文档列表）、`docs_map.md`（目录树 + 标题结构文档地图）、`CLAUDE.md`（面向 Agent 的镜像说明）、`.larkdown-mirror.yaml`（同步来源记录）。开启 `--follow` 时索引中另有「引用文档 (_refs)」一节，记录本地路径与原始 URL 的对应；正文链接保持原始飞书 URL 不改写。
 
 ### upload / ul
 

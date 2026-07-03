@@ -19,17 +19,42 @@ func TestMirrorManifestRoundTrip(t *testing.T) {
 	assert.Nil(t, m)
 
 	src := "https://example.feishu.cn/wiki/space/7034567890"
-	require.NoError(t, WriteMirrorManifest(dir, &MirrorManifest{Source: src}))
+	require.NoError(t, WriteMirrorManifest(dir, &MirrorManifest{Source: src, Follow: true, FollowDepth: 2}))
 
 	m, err = ReadMirrorManifest(dir)
 	require.NoError(t, err)
 	require.NotNil(t, m)
 	assert.Equal(t, src, m.Source)
+	assert.True(t, m.Follow)
+	assert.Equal(t, 2, m.FollowDepth)
+}
+
+// 旧版边车（只有 source 键）解析后 follow 字段为零值，向后兼容
+func TestMirrorManifestLegacyYaml(t *testing.T) {
+	dir := t.TempDir()
+	legacy := "source: https://example.feishu.cn/wiki/space/7034567890\n"
+	require.NoError(t, os.WriteFile(filepath.Join(dir, MirrorManifestFilename), []byte(legacy), 0o644))
+
+	m, err := ReadMirrorManifest(dir)
+	require.NoError(t, err)
+	require.NotNil(t, m)
+	assert.Equal(t, "https://example.feishu.cn/wiki/space/7034567890", m.Source)
+	assert.False(t, m.Follow)
+	assert.Zero(t, m.FollowDepth)
+}
+
+// 未开 follow 时写出的边车不含 follow 键（omitempty），与旧版格式一致
+func TestMirrorManifestOmitsFollowWhenOff(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, WriteMirrorManifest(dir, &MirrorManifest{Source: "https://x.feishu.cn/wiki/space/1"}))
+	data, err := os.ReadFile(filepath.Join(dir, MirrorManifestFilename))
+	require.NoError(t, err)
+	assert.NotContains(t, string(data), "follow")
 }
 
 func TestGenerateMirrorClaudeMd(t *testing.T) {
 	src := "https://example.feishu.cn/wiki/space/7034567890"
-	content := GenerateMirrorClaudeMd("产品知识库", src)
+	content := GenerateMirrorClaudeMd("产品知识库", src, false)
 
 	assert.True(t, strings.HasPrefix(content, "# 产品知识库（飞书文档镜像）\n"))
 	assert.Contains(t, content, src)
@@ -37,8 +62,14 @@ func TestGenerateMirrorClaudeMd(t *testing.T) {
 	assert.Contains(t, content, "docs_map.md")
 	assert.Contains(t, content, MirrorManifestFilename)
 	assert.Contains(t, content, "larkdown mirror")
+	// 未开 follow 不提 _refs
+	assert.NotContains(t, content, "_refs")
 	// 内容确定性：不含时间戳，重复生成零 diff
-	assert.Equal(t, content, GenerateMirrorClaudeMd("产品知识库", src))
+	assert.Equal(t, content, GenerateMirrorClaudeMd("产品知识库", src, false))
+
+	followed := GenerateMirrorClaudeMd("产品知识库", src, true)
+	assert.Contains(t, followed, "`_refs/`")
+	assert.Contains(t, followed, "引用文档 (_refs)")
 }
 
 // writeDocWithSource 写一个带末尾 frontmatter 的镜像文档

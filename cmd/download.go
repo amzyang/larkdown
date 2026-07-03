@@ -16,11 +16,31 @@ import (
 )
 
 type DownloadOpts struct {
-	outputDir string
-	recursive bool
-	comments  bool
-	noDiff    bool
-	force     bool // 忽略本地版本标记，强制重新下载
+	outputDir   string
+	recursive   bool
+	comments    bool
+	noDiff      bool
+	force       bool               // 忽略本地版本标记，强制重新下载
+	follow      bool               // 追加下载正文引用的 docx/wiki 文档到 _refs/
+	followDepth int                // follow 的引用层数（>=1）
+	refs        *core.RefCollector // 正文引用收集器（nil = 不收集；并发 goroutine 共享）
+}
+
+// filterSelfRefs 过滤指向文档自身的引用（自链/锚点跳转），避免 follow 自我下载。
+func filterSelfRefs(refs []core.DocRef, selfTokens ...string) []core.DocRef {
+	self := make(map[string]bool, len(selfTokens))
+	for _, t := range selfTokens {
+		if t != "" {
+			self[t] = true
+		}
+	}
+	var out []core.DocRef
+	for _, r := range refs {
+		if !self[r.Token] {
+			out = append(out, r)
+		}
+	}
+	return out
 }
 
 var dlOpts = DownloadOpts{}
@@ -85,12 +105,19 @@ func downloadDocument(ctx context.Context, client *core.Client, url string, opts
 	// 仅当本地记录存在时才多打一次轻量 GetDocxDocument；全新下载零额外 API 调用。
 	if !opts.force {
 		if rec := lookupDownloadRecord(docToken, opts.outputDir); rec != nil {
-			if content, err := os.ReadFile(rec.Path); err == nil {
+			if opts.refs != nil && !rec.RefsRecorded {
+				// 旧版记录未采集正文引用：--follow 需要 refs 才能保证 prune 不误删 _refs/，
+				// 本次视为过期重新下载补录（仅发生一次，新记录带 refs 后恢复跳过）
+				fmt.Printf("下载记录缺引用信息，重新下载补录: %s\n", rec.Path)
+			} else if content, err := os.ReadFile(rec.Path); err == nil {
 				if doc, err := client.GetDocxDocument(ctx, docToken); err == nil &&
 					core.DownloadVersion(objEditTime, doc.RevisionID) == rec.Version {
 					fmt.Printf("未变化，跳过: %s\n", rec.Path)
 					_, body, _ := core.ParseFrontMatter(string(content))
 					meta := core.LocalDocMeta(rec.Path, body)
+					// 跳过拉块时回放记录中的引用，保证 --follow 的 refs 集合完整
+					// （否则二次 mirror 全部命中跳过 → refs 为空 → prune 误删 _refs/）
+					opts.refs.Add(filterSelfRefs(rec.Refs, urlToken, docToken)...)
 					return &meta, nil
 				}
 			}
@@ -116,6 +143,7 @@ func downloadDocument(ctx context.Context, client *core.Client, url string, opts
 
 	title := docx.Title
 	markdown := parser.ParseDocxContent(docx, blocks)
+	opts.refs.Add(filterSelfRefs(parser.RefDocs, urlToken, docToken)...)
 
 	// 注入文档 token 和域名前缀，用于 cookie 回退的按文档隔离和 Referer 构建
 	ctx = core.WithDocToken(ctx, docToken)
@@ -195,12 +223,13 @@ func downloadDocument(ctx context.Context, client *core.Client, url string, opts
 	}
 	fmt.Printf("Downloaded markdown file to %s\n", outputPath)
 
-	// 记录下载版本（供下次跳过未变化文档）；素材下载不完整时清除记录，保证下次重试
+	// 记录下载版本与正文引用（供下次跳过未变化文档并回放 refs）；
+	// 素材下载不完整时清除记录，保证下次重试
 	version := core.DownloadVersion(objEditTime, docx.RevisionID)
 	if len(failedAssets) > 0 {
 		version = ""
 	}
-	recordDownloadVersion(docToken, outputPath, version)
+	recordDownloadVersion(docToken, outputPath, version, parser.RefDocs)
 
 	if len(failedAssets) > 0 {
 		total := len(parser.ImgTokens) + len(parser.FileTokens)
@@ -238,7 +267,7 @@ func lookupDownloadRecord(documentID, outputDir string) *core.DownloadRecord {
 }
 
 // recordDownloadVersion 把本次下载写入版本边车（best-effort，失败仅告警不影响下载结果）。
-func recordDownloadVersion(documentID, outputPath, version string) {
+func recordDownloadVersion(documentID, outputPath, version string, refs []core.DocRef) {
 	cp, err := core.DefaultCachePaths()
 	if err != nil {
 		return
@@ -247,14 +276,14 @@ func recordDownloadVersion(documentID, outputPath, version string) {
 	if err != nil {
 		return
 	}
-	if err := core.RecordDownloadVersion(cp, documentID, absPath, version); err != nil {
+	if err := core.RecordDownloadVersion(cp, documentID, absPath, version, refs); err != nil {
 		log.Printf("警告: 记录下载版本失败: %v", err)
 	}
 }
 
 // downloadDocuments 递归下载文件夹。seen 非 nil 时收集远端存在的文档 token（mirror 清理用）。
-// generateIndex 为 true 时生成 llms.txt / docs_map.md 索引（仅 mirror 使用）。
-func downloadDocuments(ctx context.Context, client *core.Client, url string, seen *tokenSet, generateIndex bool) error {
+// docsIndex 非 nil 时收集索引条目（写盘由调用方负责，便于 follow 阶段追加 refs 节）。
+func downloadDocuments(ctx context.Context, client *core.Client, url string, seen *tokenSet, docsIndex *core.DocsIndex) error {
 	// Validate the url to download
 	folderToken, err := utils.ValidateFolderURL(url)
 	if err != nil {
@@ -262,13 +291,7 @@ func downloadDocuments(ctx context.Context, client *core.Client, url string, see
 	}
 	fmt.Println("Captured folder token:", folderToken)
 
-	// 初始化索引收集器
-	var docsIndex *core.DocsIndex
 	var mu sync.Mutex
-	if generateIndex {
-		docsIndex = core.NewDocsIndex(filepath.Base(dlOpts.outputDir), dlOpts.outputDir)
-	}
-
 	var firstErr error
 	wg := sync.WaitGroup{}
 
@@ -279,7 +302,7 @@ func downloadDocuments(ctx context.Context, client *core.Client, url string, see
 		if err != nil {
 			return err
 		}
-		opts := DownloadOpts{outputDir: folderPath, comments: dlOpts.comments, noDiff: dlOpts.noDiff, force: dlOpts.force}
+		opts := DownloadOpts{outputDir: folderPath, comments: dlOpts.comments, noDiff: dlOpts.noDiff, force: dlOpts.force, refs: dlOpts.refs}
 		for _, file := range files {
 			if file.Type == "folder" {
 				_folderPath := filepath.Join(folderPath, file.Name)
@@ -314,18 +337,7 @@ func downloadDocuments(ctx context.Context, client *core.Client, url string, see
 	}
 
 	wg.Wait()
-	if firstErr != nil {
-		return firstErr
-	}
-
-	// 生成索引文件
-	if docsIndex != nil {
-		if err := core.WriteDocsIndex(docsIndex, dlOpts.outputDir); err != nil {
-			return err
-		}
-	}
-
-	return nil
+	return firstErr
 }
 
 // downloadWikiNodeRecursive 递归下载 Wiki 子树。seen 非 nil 时收集远端存在的节点 token（mirror 清理用）。
@@ -362,14 +374,17 @@ func downloadWikiNodeRecursive(ctx context.Context, client *core.Client,
 			return
 		}
 		for _, n := range nodes {
+			// NodeToken 与 ObjToken 都加入：行内链接引用带 node token，
+			// 而 @mention 被飞书解析为 ObjToken（obj-type=docx），两种口径都要能命中去重
 			seen.Add(n.NodeToken)
+			seen.Add(n.ObjToken)
 			if n.HasChild {
 				_folderPath := filepath.Join(folderPath, nodeDisplayName(n.Title, n.NodeToken))
 				downloadNode(ctx, client, spaceID, _folderPath, &n.NodeToken)
 			}
 			switch n.ObjType {
 			case "docx":
-				opts := DownloadOpts{outputDir: folderPath, comments: dlOpts.comments, noDiff: dlOpts.noDiff, force: dlOpts.force}
+				opts := DownloadOpts{outputDir: folderPath, comments: dlOpts.comments, noDiff: dlOpts.noDiff, force: dlOpts.force, refs: dlOpts.refs}
 				wg.Add(1)
 				semaphore <- struct{}{}
 				go func(_url string, _folderPath string) {
@@ -423,7 +438,8 @@ func downloadWikiNodeRecursive(ctx context.Context, client *core.Client,
 	return firstErr
 }
 
-func downloadWiki(ctx context.Context, client *core.Client, url string) error {
+// downloadWiki 下载整个知识库。seen 非 nil 时收集远端存在的节点 token（--follow 树内去重用）。
+func downloadWiki(ctx context.Context, client *core.Client, url string, seen *tokenSet) error {
 	prefixURL, wikiToken, err := utils.ValidateWikiURL(url)
 	if err != nil {
 		return err
@@ -455,7 +471,7 @@ func downloadWiki(ctx context.Context, client *core.Client, url string) error {
 	sanitizedWikiName := utils.SanitizeFileName(wikiName)
 
 	// download 命令忽略部分同步失败（内部已逐条告警），始终返回 nil
-	downloadWikiNodeRecursive(ctx, client, prefixURL, spaceID, sanitizedWikiName, dlOpts.outputDir, nil, nil, nil)
+	downloadWikiNodeRecursive(ctx, client, prefixURL, spaceID, sanitizedWikiName, dlOpts.outputDir, nil, nil, seen)
 	return nil
 }
 
@@ -499,26 +515,39 @@ func handleDownloadCommand(url string) error {
 		return err
 	}
 
+	// --follow：收集正文引用，并用 seen 记录本次下载覆盖的 token（树内互引不重复进 _refs）
+	var seen *tokenSet
+	if dlOpts.follow {
+		dlOpts.refs = core.NewRefCollector()
+		seen = newTokenSet()
+		seen.Add(parsed.Token)
+	}
+
 	switch parsed.Type {
 	case utils.UrlTypeFolder:
 		if !dlOpts.recursive {
 			return fmt.Errorf("下载文件夹需要指定 -r 选项")
 		}
-		return downloadDocuments(ctx, client, url, nil, false)
+		if err := downloadDocuments(ctx, client, url, seen, nil); err != nil {
+			return err
+		}
 
 	case utils.UrlTypeWikiSettings:
 		if !dlOpts.recursive {
 			return fmt.Errorf("下载知识库需要指定 -r 选项")
 		}
-		return downloadWiki(ctx, client, url)
+		if err := downloadWiki(ctx, client, url, seen); err != nil {
+			return err
+		}
 
 	case utils.UrlTypeFile:
 		return downloadFile(ctx, client, parsed.Token, "", dlOpts.outputDir, "file")
 
 	case utils.UrlTypeDocx:
 		// 普通 docx 文档，-r 被忽略
-		_, err = downloadDocument(ctx, client, url, &dlOpts)
-		return err
+		if _, err := downloadDocument(ctx, client, url, &dlOpts); err != nil {
+			return err
+		}
 
 	case utils.UrlTypeWikiNode:
 		// Wiki 节点，需要判断是 space_id 还是 node_token
@@ -526,37 +555,48 @@ func handleDownloadCommand(url string) error {
 		if err != nil {
 			return err
 		}
+		if node != nil {
+			// 根文档的 ObjToken 也记录：被 follow 到的文档 @mention 回根文档时不重复下载
+			seen.Add(node.ObjToken)
+		}
 
-		if isSpace {
+		switch {
+		case isSpace:
 			// 是 space_id，需要 -r
 			if !dlOpts.recursive {
 				return fmt.Errorf("下载知识库需要指定 -r 选项")
 			}
-			return downloadWiki(ctx, client, url)
-		}
+			if err := downloadWiki(ctx, client, url, seen); err != nil {
+				return err
+			}
 
-		// 是 node_token
-		if dlOpts.recursive && node.HasChild {
+		case dlOpts.recursive && node.HasChild:
 			displayName := nodeDisplayName(node.Title, node.NodeToken)
 
 			// 先下载根节点自身（不递归）
-			rootOpts := DownloadOpts{outputDir: dlOpts.outputDir, comments: dlOpts.comments, noDiff: dlOpts.noDiff, force: dlOpts.force}
+			rootOpts := DownloadOpts{outputDir: dlOpts.outputDir, comments: dlOpts.comments, noDiff: dlOpts.noDiff, force: dlOpts.force, refs: dlOpts.refs}
 			if _, rootErr := downloadDocument(ctx, client, url, &rootOpts); rootErr != nil {
 				log.Printf("警告: 根节点下载失败，继续下载子节点: %v", rootErr)
 			}
 
 			// 递归下载子节点
-			downloadWikiNodeRecursive(ctx, client, parsed.PrefixURL, spaceID, displayName, dlOpts.outputDir, &node.NodeToken, nil, nil)
-			return nil
-		}
+			downloadWikiNodeRecursive(ctx, client, parsed.PrefixURL, spaceID, displayName, dlOpts.outputDir, &node.NodeToken, nil, seen)
 
-		// 下载单个 Wiki 节点文档
-		_, err = downloadDocument(ctx, client, url, &dlOpts)
-		return err
+		default:
+			// 下载单个 Wiki 节点文档
+			if _, err := downloadDocument(ctx, client, url, &dlOpts); err != nil {
+				return err
+			}
+		}
 
 	default:
 		return fmt.Errorf("unsupported URL type: %s", url)
 	}
+
+	if dlOpts.follow {
+		runFollowPhase(ctx, client, dlOpts.outputDir, dlOpts.refs.Drain(), dlOpts.followDepth, seen, nil, &dlOpts)
+	}
+	return nil
 }
 
 func downloadFile(ctx context.Context, client *core.Client, fileToken, title, outputDir, objType string) error {

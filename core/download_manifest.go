@@ -12,7 +12,8 @@ import (
 const downloadManifestHeader = `# larkdown 下载版本记录 —— 可安全删除（仅导致下次重新下载）
 #
 # 本文件由 larkdown download 自动生成与维护，按飞书 document_id 记录各输出目录下
-# 下载产物的路径与下载时的远程版本（Wiki: obj_edit_time.revision_id；docx: revision_id）。
+# 下载产物的路径与下载时的远程版本（Wiki: obj_edit_time.revision_id；docx: revision_id），
+# 以及下载时采集的正文引用（--follow 跳过未变化文档时回放）。
 # 重复下载时本地记录与远程版本一致 → 跳过拉取块与素材；download --force 忽略本记录。
 #
 # 存放于用户缓存目录，属可重建缓存，不随工作目录或版本库移动。
@@ -26,9 +27,15 @@ type DownloadManifest struct {
 }
 
 // DownloadRecord 单条下载记录。同一文档在同一输出目录下仅一条（文件名可随标题变化）。
+// Refs 持久化下载时 parser 采集的正文引用（未过滤自引用），skip-unchanged 时直接回放，
+// 免去从 markdown 产物反解——反解永远追不上渲染格式的所有细节（歧义围栏、嵌套方括号等），
+// 漏一条 ref 就会让 mirror --follow 的 prune 误删 _refs/。RefsRecorded 区分「已采集但为零」
+// 与旧版记录「未采集」：--follow 遇旧记录视为过期，重新下载一次补录。
 type DownloadRecord struct {
-	Path    string `yaml:"path"`    // 下载产物绝对路径（filepath.Clean）
-	Version string `yaml:"version"` // 下载时的远程版本（见 DownloadVersion）
+	Path         string   `yaml:"path"`                    // 下载产物绝对路径（filepath.Clean）
+	Version      string   `yaml:"version"`                 // 下载时的远程版本（见 DownloadVersion）
+	RefsRecorded bool     `yaml:"refs_recorded,omitempty"` // 本条记录是否已采集正文引用
+	Refs         []DocRef `yaml:"refs,omitempty"`          // 正文引用的 docx/wiki 文档
 }
 
 // DownloadVersion 组合文档下载版本标记。revision_id 随内容编辑与评论变化，
@@ -85,20 +92,21 @@ func (m *DownloadManifest) lookupByDir(documentID, absDir string) *DownloadRecor
 
 // upsertByDir 插入或更新一条记录，按产物所在目录去重（标题变更导致的重命名会覆盖旧条目）。
 // document 变更时清空旧记录。
-func (m *DownloadManifest) upsertByDir(documentID, absPath, version string) {
+func (m *DownloadManifest) upsertByDir(documentID, absPath, version string, refs []DocRef) {
 	if m.DocumentID != documentID {
 		m.DocumentID = documentID
 		m.Entries = nil
 	}
 	absPath = filepath.Clean(absPath)
 	dir := filepath.Dir(absPath)
+	rec := DownloadRecord{Path: absPath, Version: version, RefsRecorded: true, Refs: refs}
 	for i := range m.Entries {
 		if filepath.Dir(m.Entries[i].Path) == dir {
-			m.Entries[i] = DownloadRecord{Path: absPath, Version: version}
+			m.Entries[i] = rec
 			return
 		}
 	}
-	m.Entries = append(m.Entries, DownloadRecord{Path: absPath, Version: version})
+	m.Entries = append(m.Entries, rec)
 }
 
 // removeByDir 删除 absDir 目录下的记录（如有）。
@@ -124,9 +132,10 @@ func LookupDownloadRecord(cp CachePaths, documentID, absDir string) *DownloadRec
 	return m.lookupByDir(documentID, absDir)
 }
 
-// RecordDownloadVersion 记录一次下载：version 非空则 upsert；为空（素材下载不完整）则
-// 清除该目录的记录，保证下次重新下载重试。
-func RecordDownloadVersion(cp CachePaths, documentID, absPath, version string) error {
+// RecordDownloadVersion 记录一次下载：version 非空则 upsert（refs 为下载时 parser
+// 采集的正文引用，随记录持久化）；为空（素材下载不完整）则清除该目录的记录，
+// 保证下次重新下载重试。
+func RecordDownloadVersion(cp CachePaths, documentID, absPath, version string, refs []DocRef) error {
 	m, err := ReadDownloadManifest(cp, documentID)
 	if err != nil {
 		return err
@@ -137,7 +146,7 @@ func RecordDownloadVersion(cp CachePaths, documentID, absPath, version string) e
 	if version == "" {
 		m.removeByDir(documentID, filepath.Dir(absPath))
 	} else {
-		m.upsertByDir(documentID, absPath, version)
+		m.upsertByDir(documentID, absPath, version, refs)
 	}
 	return WriteDownloadManifest(cp, documentID, m)
 }

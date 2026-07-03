@@ -35,11 +35,19 @@ type FolderNode struct {
 	Children []*FolderNode // 子目录
 }
 
+// RefDoc --follow 下载的被引用文档索引项
+type RefDoc struct {
+	Title     string // 文档标题
+	RelPath   string // 相对镜像根的路径（如 "_refs/xxx.md"）
+	SourceURL string // 原始飞书 URL
+}
+
 // DocsIndex 整个下载任务的索引
 type DocsIndex struct {
 	RootName    string      // 根目录/Wiki 名称
 	OutputDir   string      // 输出目录
 	Docs        []DocMeta   // 扁平文档列表（用于 llms.txt）
+	Refs        []RefDoc    // follow 下载的引用文档（llms.txt / docs_map.md 单列一节）
 	Tree        *FolderNode // 目录树结构（用于 docs_map.md）
 	GeneratedAt time.Time
 	mu          sync.Mutex
@@ -77,6 +85,13 @@ func (idx *DocsIndex) AddDoc(meta DocMeta, folderPath string) {
 
 	// 添加到目录树
 	idx.addToTree(meta, relFolderPath)
+}
+
+// AddRef 添加 follow 下载的引用文档到索引（线程安全）
+func (idx *DocsIndex) AddRef(ref RefDoc) {
+	idx.mu.Lock()
+	defer idx.mu.Unlock()
+	idx.Refs = append(idx.Refs, ref)
 }
 
 // addToTree 将文档添加到目录树
@@ -163,6 +178,7 @@ func GenerateLlmsTxt(idx *DocsIndex) string {
 		title := escapeMarkdownLink(doc.Title)
 		buf.WriteString(fmt.Sprintf("- [%s](%s)\n", title, doc.RelPath))
 	}
+	writeRefsSection(&buf, idx.Refs)
 	return buf.String()
 }
 
@@ -174,7 +190,25 @@ func GenerateDocsMap(idx *DocsIndex) string {
 		idx.GeneratedAt.Format(time.RFC3339)))
 
 	writeFolder(&buf, idx.Tree, 0)
+	writeRefsSection(&buf, idx.Refs)
 	return buf.String()
+}
+
+// writeRefsSection 输出「引用文档 (_refs)」一节：本地路径 ← 原始 URL 的映射，
+// 让 Agent/人能从正文里的飞书 URL 查到已 follow 下载的本地文件（正文零改写）。
+// 无 refs 时完全不输出，保证未开 --follow 的存量镜像零 diff。
+func writeRefsSection(buf *strings.Builder, refs []RefDoc) {
+	if len(refs) == 0 {
+		return
+	}
+	if !strings.HasSuffix(buf.String(), "\n\n") {
+		buf.WriteString("\n")
+	}
+	buf.WriteString("## 引用文档 (_refs)\n\n")
+	for _, ref := range refs {
+		buf.WriteString(fmt.Sprintf("- [%s](%s) ← <%s>\n",
+			escapeMarkdownLink(ref.Title), ref.RelPath, ref.SourceURL))
+	}
 }
 
 func writeFolder(buf *strings.Builder, node *FolderNode, depth int) {

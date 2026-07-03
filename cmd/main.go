@@ -108,6 +108,8 @@ func newRootCommand() *cli.Command {
 					&cli.BoolFlag{Name: "comments", Aliases: []string{"c"}, Value: true, Usage: "Include document comments in the exported Markdown"},
 					&cli.BoolFlag{Name: "no-diff", Usage: "Disable diff output when downloading"},
 					&cli.BoolFlag{Name: "force", Aliases: []string{"f"}, Usage: "Force re-download even if the remote document is unchanged"},
+					&cli.BoolFlag{Name: "follow", Usage: "Also download referenced docx/wiki documents (mentions and inline links) into _refs/"},
+					&cli.IntFlag{Name: "follow-depth", Value: 1, Usage: "How many levels of references to follow (requires --follow)"},
 				},
 				ArgsUsage: "<url>",
 				Action: func(ctx context.Context, cmd *cli.Command) error {
@@ -119,6 +121,14 @@ func newRootCommand() *cli.Command {
 					dlOpts.comments = cmd.Bool("comments")
 					dlOpts.noDiff = cmd.Bool("no-diff")
 					dlOpts.force = cmd.Bool("force")
+					dlOpts.follow = cmd.Bool("follow")
+					dlOpts.followDepth = cmd.Int("follow-depth")
+					if cmd.IsSet("follow-depth") && !dlOpts.follow {
+						return cli.Exit("--follow-depth requires --follow", 1)
+					}
+					if dlOpts.followDepth < 1 {
+						return cli.Exit("--follow-depth must be >= 1", 1)
+					}
 
 					url := cmd.Args().First()
 					return handleDownloadCommand(url)
@@ -138,12 +148,18 @@ func newRootCommand() *cli.Command {
 					&cli.BoolFlag{Name: "comments", Aliases: []string{"c"}, Value: true, Usage: "Include document comments in the exported Markdown"},
 					&cli.BoolFlag{Name: "force", Aliases: []string{"f"}, Usage: "Force re-download even if the remote document is unchanged"},
 					&cli.BoolFlag{Name: "no-prune", Usage: "Keep local files whose remote documents were deleted"},
+					&cli.BoolFlag{Name: "follow", Usage: "Also download referenced docx/wiki documents (mentions and inline links) into _refs/; recorded in the mirror manifest for re-sync"},
+					&cli.IntFlag{Name: "follow-depth", Value: 1, Usage: "How many levels of references to follow (requires --follow)"},
 				},
 				Action: func(ctx context.Context, cmd *cli.Command) error {
 					mirrorOpts.outputDir = cmd.String("output")
 					mirrorOpts.comments = cmd.Bool("comments")
 					mirrorOpts.force = cmd.Bool("force")
 					mirrorOpts.noPrune = cmd.Bool("no-prune")
+					mirrorOpts.follow = cmd.Bool("follow")
+					mirrorOpts.followDepth = cmd.Int("follow-depth")
+					mirrorOpts.followSet = cmd.IsSet("follow")
+					mirrorOpts.depthSet = cmd.IsSet("follow-depth")
 					return handleMirrorCommand(cmd.Args().First())
 				},
 			},
