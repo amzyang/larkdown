@@ -67,6 +67,7 @@ func newRootCommand() *cli.Command {
 		Name:                            "larkdown",
 		Version:                         strings.TrimSpace(string(version)),
 		Usage:                           "Feishu/Lark documents <-> Markdown: download, upload, sync and publish",
+		Description:                     "Project home: https://github.com/amzyang/larkdown",
 		EnableShellCompletion:           true,
 		ConfigureShellCompletionCommand: configureShellCompletion,
 		Flags: []cli.Flag{
