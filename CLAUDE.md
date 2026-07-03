@@ -69,6 +69,7 @@ make clean          # 删除构建产物
 **第三档 · 删除 + 重建（前两档都不满足）：**
 
 - 容器块 table / callout / quote_container（descendant 块）→ 整容器重建，子块 id 全变
+- 远端带嵌套子块的 text-like 块（嵌套列表、折叠标题等）与本地扁平块配对时——`update_text_elements` 改不到子块、docs_ai `block_replace` 未验证能整树替换，原地 patch 会导致签名（`desc:` vs 扁平）永不收敛、每次 upload 都报同一变更
 - 白板 board（`batch_update` 无 ReplaceBoard、board/v1 无删改节点 API）
 - AddOns 插件块（如 mermaid，docs_ai XML 无法表达）
 - 跨「容器↔非容器」、跨「text-like↔非 text-like」等其余类型变化

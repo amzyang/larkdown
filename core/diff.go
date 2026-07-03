@@ -691,6 +691,14 @@ func canReplace(remote *lark.DocxBlock, local *lark.DocxBlock, localIdx int, res
 		return false
 	}
 
+	// 远端带嵌套子块的块（嵌套列表等）：update_text_elements 只能改父块文本元素，
+	// 增删不了子块——patch 后远端子树仍在，签名（desc: vs 扁平）永不收敛，
+	// 表现为每次 upload 都检测到同一变更且远端不生效。走删除重建。
+	// 注：View 包裹的 File 不受影响（其 BlockType 为 View，本就不进下方分支）。
+	if len(remote.Children) > 0 {
+		return false
+	}
+
 	// 同类型的 text-like 块可以替换
 	if remote.BlockType == local.BlockType && isTextLikeBlock(remote.BlockType) {
 		return true
@@ -740,6 +748,10 @@ func canDocsAIReplace(remote, local *lark.DocxBlock, localIdx int, result *Conve
 	}
 	// 容器块：docs_ai markdown 表达受限，暂走删除重建（见函数注释）
 	if isDescendantBlock(remote.BlockType) || result.descendantGroupAt(localIdx) != nil {
+		return false
+	}
+	// 远端带嵌套子块：block_replace 未验证能整树替换，与 canReplace 对齐走删除重建
+	if len(remote.Children) > 0 {
 		return false
 	}
 	// 画板 / AddOns：docs_ai 无法表达

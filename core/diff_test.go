@@ -315,6 +315,35 @@ func TestPairBlocks_DescendantNotPaired(t *testing.T) {
 	assert.Equal(t, PairedOpInsert, ops[1].Type)
 }
 
+func TestPairBlocks_RemoteWithChildrenNotPaired(t *testing.T) {
+	// 回归：远端带嵌套子块的 bullet（嵌套列表）与本地扁平 bullet 同为 text-like，
+	// 若配成 Replace，update_text_elements 只改父块文本、删不掉远端子块，
+	// 签名（desc:hash vs 13:text）永不收敛 → 每次 upload 都报同一变更且远端不生效。
+	remoteBlocks := []*lark.DocxBlock{
+		{
+			BlockType: lark.DocxBlockTypeBullet,
+			Bullet:    &lark.DocxBlockText{},
+			Children:  []string{"child1"},
+		},
+	}
+	localResult := &ConvertResult{
+		TopBlocks: []*lark.DocxBlock{
+			{BlockType: lark.DocxBlockTypeBullet, Bullet: &lark.DocxBlockText{}},
+		},
+	}
+	region := ChangeRegion{
+		DeleteIndices: []int{0},
+		InsertIndices: []int{0},
+	}
+
+	for _, docsAI := range []bool{false, true} {
+		ops := PairBlocks(region, remoteBlocks, localResult, docsAI)
+		assert.Len(t, ops, 2, "docsAI=%v", docsAI)
+		assert.Equal(t, PairedOpDelete, ops[0].Type, "docsAI=%v", docsAI)
+		assert.Equal(t, PairedOpInsert, ops[1].Type, "docsAI=%v", docsAI)
+	}
+}
+
 func TestPairBlocks_ImagePaired(t *testing.T) {
 	remoteBlocks := []*lark.DocxBlock{
 		{BlockType: lark.DocxBlockTypeImage, Image: &lark.DocxBlockImage{Token: "old"}},
