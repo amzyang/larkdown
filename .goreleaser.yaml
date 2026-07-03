@@ -37,7 +37,12 @@ changelog:
   use: github
   sort: asc
   filters:
-    exclude: ["^docs:", "^test:", "^chore:", "^ci:", "Merge "]
+    exclude:
+      - '^docs(\(.*\))?!?:'
+      - '^test(\(.*\))?!?:'
+      - '^chore(\(.*\))?!?:'
+      - '^ci(\(.*\))?!?:'
+      - "Merge "
 
 brews:
   - name: larkdown
