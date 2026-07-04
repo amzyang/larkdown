@@ -2,13 +2,14 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"log"
 	"os"
 	"strings"
 
 	"github.com/amzyang/larkdown/core"
-	"github.com/urfave/cli/v3"
+	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 )
 
 var version = "v2-test"
@@ -18,6 +19,17 @@ var globalOpts = struct {
 	debug      bool
 	clientOpts *core.ClientOptions
 }{}
+
+// exitError 对应原 cli.Exit(msg, code)：msg 裸打到 stderr（可为空），以 code 退出。
+// diff 命令依赖「空消息 + exit 1」表达 git diff --exit-code 式契约。
+type exitError struct {
+	msg  string
+	code int
+}
+
+func (e *exitError) Error() string { return e.msg }
+
+func exitWithMessage(msg string, code int) error { return &exitError{msg: msg, code: code} }
 
 // createClientFromConfig 从配置文件创建客户端，处理 token 刷新和降级逻辑。
 // 认证相关提示一律走 stderr，避免污染可管道化的 stdout 输出。
@@ -62,216 +74,283 @@ func createClientFromConfig(ctx context.Context, config *core.Config, configPath
 	return core.NewClient(config.Feishu.AppId, config.Feishu.AppSecret, globalOpts.clientOpts)
 }
 
-func newRootCommand() *cli.Command {
-	return &cli.Command{
-		Name:                            "larkdown",
-		Version:                         strings.TrimSpace(string(version)),
-		Usage:                           "Feishu/Lark documents <-> Markdown: download, upload, sync and publish",
-		Description:                     "Project home: https://github.com/amzyang/larkdown",
-		EnableShellCompletion:           true,
-		ConfigureShellCompletionCommand: configureShellCompletion,
-		Flags: []cli.Flag{
-			&cli.BoolFlag{
-				Name:  "debug",
-				Usage: "Enable HTTP request/response logging to stderr (JSONL format)",
-			},
-		},
-		Before: func(ctx context.Context, cmd *cli.Command) (context.Context, error) {
-			globalOpts.debug = cmd.Bool("debug")
-			globalOpts.clientOpts = &core.ClientOptions{Debug: globalOpts.debug}
-			return ctx, nil
-		},
-		Action: func(ctx context.Context, cmd *cli.Command) error {
-			cli.ShowAppHelp(cmd)
-			return nil
-		},
-		Commands: []*cli.Command{
-			{
-				Name:  "config",
-				Usage: "Read config file or set field(s) if provided",
-				Flags: []cli.Flag{
-					&cli.StringFlag{Name: "appId", Usage: "Set app id for the OPEN API"},
-					&cli.StringFlag{Name: "appSecret", Usage: "Set app secret for the OPEN API"},
-				},
-				Action: func(ctx context.Context, cmd *cli.Command) error {
-					configOpts.appId = cmd.String("appId")
-					configOpts.appSecret = cmd.String("appSecret")
-					return handleConfigCommand()
-				},
-			},
-			{
-				Name:    "download",
-				Aliases: []string{"dl"},
-				Usage:   "Download feishu/larksuite document to markdown file",
-				Flags: []cli.Flag{
-					&cli.StringFlag{Name: "output", Aliases: []string{"o"}, Value: "./", Usage: "Specify the output directory for the markdown files"},
-					&cli.BoolFlag{Name: "recursive", Aliases: []string{"r"}, Usage: "Recursively download all child nodes of a wiki node"},
-					&cli.BoolFlag{Name: "comments", Aliases: []string{"c"}, Value: true, Usage: "Include document comments in the exported Markdown"},
-					&cli.BoolFlag{Name: "no-diff", Usage: "Disable diff output when downloading"},
-					&cli.BoolFlag{Name: "force", Aliases: []string{"f"}, Usage: "Force re-download even if the remote document is unchanged"},
-					&cli.BoolFlag{Name: "follow", Usage: "Also download referenced docx/wiki documents (mentions and inline links) into _refs/"},
-					&cli.IntFlag{Name: "follow-depth", Value: 1, Usage: "How many levels of references to follow (requires --follow)"},
-				},
-				ArgsUsage: "<url>",
-				Action: func(ctx context.Context, cmd *cli.Command) error {
-					if cmd.NArg() == 0 {
-						return cli.Exit("Please specify the document/folder/wiki url", 1)
-					}
-					dlOpts.outputDir = cmd.String("output")
-					dlOpts.recursive = cmd.Bool("recursive")
-					dlOpts.comments = cmd.Bool("comments")
-					dlOpts.noDiff = cmd.Bool("no-diff")
-					dlOpts.force = cmd.Bool("force")
-					dlOpts.follow = cmd.Bool("follow")
-					dlOpts.followDepth = cmd.Int("follow-depth")
-					if cmd.IsSet("follow-depth") && !dlOpts.follow {
-						return cli.Exit("--follow-depth requires --follow", 1)
-					}
-					if dlOpts.followDepth < 1 {
-						return cli.Exit("--follow-depth must be >= 1", 1)
-					}
+// mdFileCompletion 生成「首个位置参数补全 .md 文件」的 ValidArgsFunction；
+// variadic 为 true 时所有位置参数都补全 .md（open 命令）。
+func mdFileCompletion(variadic bool) func(*cobra.Command, []string, string) ([]cobra.Completion, cobra.ShellCompDirective) {
+	return func(cmd *cobra.Command, args []string, toComplete string) ([]cobra.Completion, cobra.ShellCompDirective) {
+		if !variadic && len(args) > 0 {
+			return nil, cobra.ShellCompDirectiveNoFileComp
+		}
+		return []cobra.Completion{"md"}, cobra.ShellCompDirectiveFilterFileExt
+	}
+}
 
-					url := cmd.Args().First()
-					return handleDownloadCommand(url)
-				},
-			},
-			{
-				Name:      "mirror",
-				Usage:     "One-way sync (download-only) a wiki/folder into a local mirror directory with CLAUDE.md and index files",
-				ArgsUsage: "[url]",
-				Description: "Mirror a Feishu wiki space, wiki subtree or drive folder into a local directory:\n" +
-					"the output directory itself is the mirror root. Always generates llms.txt,\n" +
-					"docs_map.md and a CLAUDE.md explaining the layout, and prunes local documents\n" +
-					"that no longer exist remotely (moved to trash). Re-run without <url> inside a\n" +
-					"mirror directory to re-sync from the recorded source.",
-				Flags: []cli.Flag{
-					&cli.StringFlag{Name: "output", Aliases: []string{"o"}, Value: "./", Usage: "Mirror root directory"},
-					&cli.BoolFlag{Name: "comments", Aliases: []string{"c"}, Value: true, Usage: "Include document comments in the exported Markdown"},
-					&cli.BoolFlag{Name: "force", Aliases: []string{"f"}, Usage: "Force re-download even if the remote document is unchanged"},
-					&cli.BoolFlag{Name: "no-prune", Usage: "Keep local files whose remote documents were deleted"},
-					&cli.BoolFlag{Name: "follow", Usage: "Also download referenced docx/wiki documents (mentions and inline links) into _refs/; recorded in the mirror manifest for re-sync"},
-					&cli.IntFlag{Name: "follow-depth", Value: 1, Usage: "How many levels of references to follow (requires --follow)"},
-				},
-				Action: func(ctx context.Context, cmd *cli.Command) error {
-					mirrorOpts.outputDir = cmd.String("output")
-					mirrorOpts.comments = cmd.Bool("comments")
-					mirrorOpts.force = cmd.Bool("force")
-					mirrorOpts.noPrune = cmd.Bool("no-prune")
-					mirrorOpts.follow = cmd.Bool("follow")
-					mirrorOpts.followDepth = cmd.Int("follow-depth")
-					mirrorOpts.followSet = cmd.IsSet("follow")
-					mirrorOpts.depthSet = cmd.IsSet("follow-depth")
-					return handleMirrorCommand(cmd.Args().First())
-				},
-			},
-			newAuthCommand(),
-			newLoginAliasCommand(),
-			{
-				Name:      "upload",
-				Aliases:   []string{"ul"},
-				Usage:     "Upload local markdown file to Feishu Wiki",
-				ArgsUsage: "<file.md>",
-				Flags: []cli.Flag{
-					&cli.StringFlag{Name: "source", Usage: "Target Feishu document URL (mutually exclusive with --space/--parent)"},
-					&cli.StringFlag{Name: "space", Aliases: []string{"s"}, Usage: "Wiki space ID (optional, defaults to My Document Library)"},
-					&cli.StringFlag{Name: "parent", Aliases: []string{"p"}, Usage: "Parent node token (optional, for specifying location)"},
-					&cli.BoolFlag{Name: "incremental", Aliases: []string{"incr"}, Hidden: true, Usage: "Incremental update (default behavior; kept for backward compatibility)"},
-					&cli.BoolFlag{Name: "full", Usage: "Full update (delete all remote blocks and re-upload) instead of the default incremental update"},
-					&cli.BoolFlag{Name: "dryrun", Usage: "Show what incremental update would do without making changes (incompatible with --full)"},
-					&cli.BoolFlag{Name: "verbose", Aliases: []string{"v"}, Usage: "Show all blocks including unchanged ones (used with --dryrun)"},
-				},
-				Action: func(ctx context.Context, cmd *cli.Command) error {
-					if cmd.NArg() == 0 {
-						return cli.Exit("Please specify the markdown file to upload", 1)
-					}
-					uploadOpts.source = cmd.String("source")
-					uploadOpts.spaceID = cmd.String("space")
-					uploadOpts.parentNodeToken = cmd.String("parent")
-					if cmd.Bool("full") && cmd.Bool("incremental") {
-						return cli.Exit("--full cannot be used with --incremental/--incr", 1)
-					}
-					uploadOpts.incremental = !cmd.Bool("full")
-					uploadOpts.dryRun = cmd.Bool("dryrun")
-					uploadOpts.verbose = cmd.Bool("verbose")
-					if uploadOpts.source != "" && (uploadOpts.spaceID != "" || uploadOpts.parentNodeToken != "") {
-						return cli.Exit("--source cannot be used with --space or --parent", 1)
-					}
-					if uploadOpts.dryRun && !uploadOpts.incremental {
-						return cli.Exit("--dryrun cannot be used with --full", 1)
-					}
-					return handleUploadCommand(cmd.Args().First())
-				},
-			},
-			{
-				Name:      "publish",
-				Usage:     "Publish a local HTML file or directory as an online Feishu Miaoda (妙搭) app",
-				ArgsUsage: "<dir-or-html>",
-				Flags: []cli.Flag{
-					&cli.StringFlag{Name: "name", Aliases: []string{"n"}, Usage: "App display name (defaults to the file/dir name)"},
-					&cli.StringFlag{Name: "app-id", Usage: "Reuse an existing app to update it (app_xxx or https://miaoda.feishu.cn/app/app_xxx)"},
-					&cli.BoolFlag{Name: "new", Usage: "Force creating a new app even if a publish record exists"},
-				},
-				Action: func(ctx context.Context, cmd *cli.Command) error {
-					if cmd.NArg() == 0 {
-						return cli.Exit("Please specify the HTML file or directory to publish", 1)
-					}
-					publishOpts.name = cmd.String("name")
-					publishOpts.appID = cmd.String("app-id")
-					publishOpts.forceNew = cmd.Bool("new")
-					if publishOpts.appID != "" && publishOpts.forceNew {
-						return cli.Exit("--app-id cannot be used with --new", 1)
-					}
-					return handlePublishCommand(cmd.Args().First())
-				},
-			},
-			{
-				Name:      "diff",
-				Usage:     "Show diff between local markdown and remote Feishu document",
-				ArgsUsage: "<file.md>",
-				Flags: []cli.Flag{
-					&cli.BoolFlag{Name: "invert", Aliases: []string{"i"}, Usage: "Invert diff direction (remote → local)"},
-				},
-				Action: func(ctx context.Context, cmd *cli.Command) error {
-					if cmd.NArg() == 0 {
-						return cli.Exit("Please specify the markdown file", 1)
-					}
-					diffOpts.invert = cmd.Bool("invert")
-					return handleDiffCommand(cmd.Args().First())
-				},
-			},
-			{
-				Name:      "open",
-				Usage:     "Open the source Feishu document URL in the browser",
-				ArgsUsage: "<file.md> [file2.md ...]",
-				Action: func(ctx context.Context, cmd *cli.Command) error {
-					if cmd.NArg() == 0 {
-						return cli.Exit("Please specify at least one markdown file", 1)
-					}
-					return handleOpenCommand(cmd.Args().Slice())
-				},
-			},
-			{
-				Name:      "ocr",
-				Usage:     "Recognize text from an image using Feishu AI OCR",
-				ArgsUsage: "[image-file]",
-				Action: func(ctx context.Context, cmd *cli.Command) error {
-					imagePath := cmd.Args().First()
-					return handleOCRCommand(ctx, imagePath)
-				},
-			},
-			{
-				Name:  "skills",
-				Usage: "Show how to install and upgrade the larkdown agent skill for Claude Code",
-				Action: func(ctx context.Context, cmd *cli.Command) error {
-					return handleSkillsCommand()
-				},
-			},
+// noFileCompletion 位置参数是 URL 等非文件输入时禁用文件名补全。
+func noFileCompletion(cmd *cobra.Command, args []string, toComplete string) ([]cobra.Completion, cobra.ShellCompDirective) {
+	return nil, cobra.ShellCompDirectiveNoFileComp
+}
+
+func newConfigCommand() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "config",
+		Short: "Read config file or set field(s) if provided",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return handleConfigCommand()
+		},
+	}
+	fl := cmd.Flags()
+	fl.StringVar(&configOpts.appId, "appId", "", "Set app id for the OPEN API")
+	fl.StringVar(&configOpts.appSecret, "appSecret", "", "Set app secret for the OPEN API")
+	return cmd
+}
+
+func newDownloadCommand() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:               "download <url>",
+		Aliases:           []string{"dl"},
+		Short:             "Download feishu/larksuite document to markdown file",
+		ValidArgsFunction: noFileCompletion,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if len(args) == 0 {
+				return exitWithMessage("Please specify the document/folder/wiki url", 1)
+			}
+			if cmd.Flags().Changed("follow-depth") && !dlOpts.follow {
+				return exitWithMessage("--follow-depth requires --follow", 1)
+			}
+			if dlOpts.followDepth < 1 {
+				return exitWithMessage("--follow-depth must be >= 1", 1)
+			}
+			return handleDownloadCommand(args[0])
+		},
+	}
+	fl := cmd.Flags()
+	fl.StringVarP(&dlOpts.outputDir, "output", "o", "./", "Specify the output directory for the markdown files")
+	fl.BoolVarP(&dlOpts.recursive, "recursive", "r", false, "Recursively download all child nodes of a wiki node")
+	fl.BoolVarP(&dlOpts.comments, "comments", "c", true, "Include document comments in the exported Markdown")
+	fl.BoolVar(&dlOpts.noDiff, "no-diff", false, "Disable diff output when downloading")
+	fl.BoolVarP(&dlOpts.force, "force", "f", false, "Force re-download even if the remote document is unchanged")
+	fl.BoolVar(&dlOpts.follow, "follow", false, "Also download referenced docx/wiki documents (mentions and inline links) into _refs/")
+	fl.IntVar(&dlOpts.followDepth, "follow-depth", 1, "How many levels of references to follow (requires --follow)")
+	_ = cmd.MarkFlagDirname("output")
+	return cmd
+}
+
+func newMirrorCommand() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "mirror [url]",
+		Short: "One-way sync (download-only) a wiki/folder into a local mirror directory with CLAUDE.md and index files",
+		Long: "Mirror a Feishu wiki space, wiki subtree or drive folder into a local directory:\n" +
+			"the output directory itself is the mirror root. Always generates llms.txt,\n" +
+			"docs_map.md and a CLAUDE.md explaining the layout, and prunes local documents\n" +
+			"that no longer exist remotely (moved to trash). Re-run without <url> inside a\n" +
+			"mirror directory to re-sync from the recorded source.",
+		ValidArgsFunction: noFileCompletion,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			mirrorOpts.followSet = cmd.Flags().Changed("follow")
+			mirrorOpts.depthSet = cmd.Flags().Changed("follow-depth")
+			var url string
+			if len(args) > 0 {
+				url = args[0]
+			}
+			return handleMirrorCommand(url)
+		},
+	}
+	fl := cmd.Flags()
+	fl.StringVarP(&mirrorOpts.outputDir, "output", "o", "./", "Mirror root directory")
+	fl.BoolVarP(&mirrorOpts.comments, "comments", "c", true, "Include document comments in the exported Markdown")
+	fl.BoolVarP(&mirrorOpts.force, "force", "f", false, "Force re-download even if the remote document is unchanged")
+	fl.BoolVar(&mirrorOpts.noPrune, "no-prune", false, "Keep local files whose remote documents were deleted")
+	fl.BoolVar(&mirrorOpts.follow, "follow", false, "Also download referenced docx/wiki documents (mentions and inline links) into _refs/; recorded in the mirror manifest for re-sync")
+	fl.IntVar(&mirrorOpts.followDepth, "follow-depth", 1, "How many levels of references to follow (requires --follow)")
+	_ = cmd.MarkFlagDirname("output")
+	return cmd
+}
+
+func newUploadCommand() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:               "upload <file.md>",
+		Aliases:           []string{"ul"},
+		Short:             "Upload local markdown file to Feishu Wiki",
+		ValidArgsFunction: mdFileCompletion(false),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if len(args) == 0 {
+				return exitWithMessage("Please specify the markdown file to upload", 1)
+			}
+			full, _ := cmd.Flags().GetBool("full")
+			incremental, _ := cmd.Flags().GetBool("incremental")
+			if full && incremental {
+				return exitWithMessage("--full cannot be used with --incremental/--incr", 1)
+			}
+			uploadOpts.incremental = !full
+			if uploadOpts.source != "" && (uploadOpts.spaceID != "" || uploadOpts.parentNodeToken != "") {
+				return exitWithMessage("--source cannot be used with --space or --parent", 1)
+			}
+			if uploadOpts.dryRun && !uploadOpts.incremental {
+				return exitWithMessage("--dryrun cannot be used with --full", 1)
+			}
+			return handleUploadCommand(args[0])
+		},
+	}
+	// --incr 是 --incremental 的历史多字符别名，归一到同一 flag（老脚本零迁移）
+	cmd.Flags().SetNormalizeFunc(func(f *pflag.FlagSet, name string) pflag.NormalizedName {
+		if name == "incr" {
+			name = "incremental"
+		}
+		return pflag.NormalizedName(name)
+	})
+	fl := cmd.Flags()
+	fl.StringVar(&uploadOpts.source, "source", "", "Target Feishu document URL (mutually exclusive with --space/--parent)")
+	fl.StringVarP(&uploadOpts.spaceID, "space", "s", "", "Wiki space ID (optional, defaults to My Document Library)")
+	fl.StringVarP(&uploadOpts.parentNodeToken, "parent", "p", "", "Parent node token (optional, for specifying location)")
+	fl.Bool("incremental", false, "Incremental update (default behavior; kept for backward compatibility)")
+	fl.Bool("full", false, "Full update (delete all remote blocks and re-upload) instead of the default incremental update")
+	fl.BoolVar(&uploadOpts.dryRun, "dryrun", false, "Show what incremental update would do without making changes (incompatible with --full)")
+	fl.BoolVarP(&uploadOpts.verbose, "verbose", "v", false, "Show all blocks including unchanged ones (used with --dryrun)")
+	_ = fl.MarkHidden("incremental")
+	return cmd
+}
+
+func newPublishCommand() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "publish <dir-or-html>",
+		Short: "Publish a local HTML file or directory as an online Feishu Miaoda (妙搭) app",
+		ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]cobra.Completion, cobra.ShellCompDirective) {
+			if len(args) > 0 {
+				return nil, cobra.ShellCompDirectiveNoFileComp
+			}
+			return []cobra.Completion{"html"}, cobra.ShellCompDirectiveFilterFileExt
+		},
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if len(args) == 0 {
+				return exitWithMessage("Please specify the HTML file or directory to publish", 1)
+			}
+			if publishOpts.appID != "" && publishOpts.forceNew {
+				return exitWithMessage("--app-id cannot be used with --new", 1)
+			}
+			return handlePublishCommand(args[0])
+		},
+	}
+	fl := cmd.Flags()
+	fl.StringVarP(&publishOpts.name, "name", "n", "", "App display name (defaults to the file/dir name)")
+	fl.StringVar(&publishOpts.appID, "app-id", "", "Reuse an existing app to update it (app_xxx or https://miaoda.feishu.cn/app/app_xxx)")
+	fl.BoolVar(&publishOpts.forceNew, "new", false, "Force creating a new app even if a publish record exists")
+	return cmd
+}
+
+func newDiffCommand() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:               "diff <file.md>",
+		Short:             "Show diff between local markdown and remote Feishu document",
+		ValidArgsFunction: mdFileCompletion(false),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if len(args) == 0 {
+				return exitWithMessage("Please specify the markdown file", 1)
+			}
+			return handleDiffCommand(args[0])
+		},
+	}
+	cmd.Flags().BoolVarP(&diffOpts.invert, "invert", "i", false, "Invert diff direction (remote → local)")
+	return cmd
+}
+
+func newOpenCommand() *cobra.Command {
+	return &cobra.Command{
+		Use:               "open <file.md> [file2.md ...]",
+		Short:             "Open the source Feishu document URL in the browser",
+		ValidArgsFunction: mdFileCompletion(true),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if len(args) == 0 {
+				return exitWithMessage("Please specify at least one markdown file", 1)
+			}
+			return handleOpenCommand(args)
 		},
 	}
 }
 
-func main() {
-	if err := newRootCommand().Run(context.Background(), os.Args); err != nil {
-		log.Fatal(err)
+func newOCRCommand() *cobra.Command {
+	return &cobra.Command{
+		Use:   "ocr [image-file]",
+		Short: "Recognize text from an image using Feishu AI OCR",
+		ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]cobra.Completion, cobra.ShellCompDirective) {
+			if len(args) > 0 {
+				return nil, cobra.ShellCompDirectiveNoFileComp
+			}
+			return []cobra.Completion{"png", "jpg", "jpeg", "gif", "bmp", "webp"}, cobra.ShellCompDirectiveFilterFileExt
+		},
+		RunE: func(cmd *cobra.Command, args []string) error {
+			var imagePath string
+			if len(args) > 0 {
+				imagePath = args[0]
+			}
+			return handleOCRCommand(cmd.Context(), imagePath)
+		},
 	}
+}
+
+func newSkillsCommand() *cobra.Command {
+	return &cobra.Command{
+		Use:   "skills",
+		Short: "Show how to install and upgrade the larkdown agent skill for Claude Code",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return handleSkillsCommand()
+		},
+	}
+}
+
+func newRootCommand() *cobra.Command {
+	short := "Feishu/Lark documents <-> Markdown: download, upload, sync and publish"
+	root := &cobra.Command{
+		Use:               "larkdown",
+		Short:             short,
+		Long:              short + "\n\nProject home: https://github.com/amzyang/larkdown",
+		Version:           strings.TrimSpace(version),
+		SilenceErrors:     true,
+		SilenceUsage:      true,
+		CompletionOptions: cobra.CompletionOptions{DisableDefaultCmd: true},
+		// 为所有子命令构造客户端选项
+		PersistentPreRun: func(cmd *cobra.Command, args []string) {
+			globalOpts.clientOpts = &core.ClientOptions{Debug: globalOpts.debug}
+		},
+		// 无 RunE：裸 larkdown 打印 help 到 stdout，exit 0
+	}
+	root.PersistentFlags().BoolVar(&globalOpts.debug, "debug", false, "Enable HTTP request/response logging to stderr (JSONL format)")
+	// flag 解析错误：单行错误 + --help 提示（不 dump 整页 usage），退出码 1
+	root.SetFlagErrorFunc(func(cmd *cobra.Command, err error) error {
+		return &exitError{
+			msg:  fmt.Sprintf("%v\nRun '%s --help' for usage.", err, cmd.CommandPath()),
+			code: 1,
+		}
+	})
+	root.AddCommand(
+		newConfigCommand(),
+		newDownloadCommand(),
+		newMirrorCommand(),
+		newAuthCommand(),
+		newLoginAliasCommand(),
+		newUploadCommand(),
+		newPublishCommand(),
+		newDiffCommand(),
+		newOpenCommand(),
+		newOCRCommand(),
+		newSkillsCommand(),
+		newCompletionCommand(),
+	)
+	return root
+}
+
+func main() {
+	err := newRootCommand().ExecuteContext(context.Background())
+	if err == nil {
+		return
+	}
+	var ee *exitError
+	if errors.As(err, &ee) {
+		if ee.msg != "" {
+			fmt.Fprintln(os.Stderr, ee.msg)
+		}
+		os.Exit(ee.code)
+	}
+	// 未知子命令与 handler 运行时错误：干净单行到 stderr（不带 log 时间戳），退出码 1
+	fmt.Fprintln(os.Stderr, "Error:", err)
+	os.Exit(1)
 }

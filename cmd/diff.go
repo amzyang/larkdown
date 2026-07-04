@@ -12,7 +12,6 @@ import (
 	"github.com/amzyang/larkdown/core"
 	"github.com/amzyang/larkdown/utils"
 	"github.com/pmezard/go-difflib/difflib"
-	"github.com/urfave/cli/v3"
 )
 
 var diffMu sync.Mutex
@@ -167,5 +166,6 @@ func handleDiffCommand(filePath string) error {
 
 	writeDiffOutput(text, config.Output.DiffStyle)
 
-	return cli.Exit("", 1)
+	// 空消息 + exit 1：git diff --exit-code 式契约（README 承诺，脚本依赖）
+	return exitWithMessage("", 1)
 }

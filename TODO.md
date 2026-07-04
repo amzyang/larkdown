@@ -70,7 +70,7 @@
 - [x] @person
 - [x] 支持从已有文件中获取 source
 
-- [x] built-in fish shell completion (v3.8.0 有 bug，有 pr)，放弃了，urfave/cli 的 fish shell completion 质量太差
+- [x] built-in fish shell completion (v3.8.0 有 bug，有 pr)，放弃了，urfave/cli 的 fish shell completion 质量太差（后已整体迁移到 spf13/cobra，fish 补全改为动态生成，手写脚本已删除）
 - [x] sync with upstream lark sdk
 - [x] diff without download
 - [ ] 上传时支持 anchor link 映射为飞书文档内 outline 锚点

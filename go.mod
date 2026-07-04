@@ -2,10 +2,7 @@ module github.com/amzyang/larkdown
 
 go 1.26.4
 
-require (
-	github.com/chyroc/lark v0.0.114-0.20260226061401-82ff1e3935ce
-	github.com/urfave/cli/v3 v3.10.1
-)
+require github.com/chyroc/lark v0.0.114-0.20260226061401-82ff1e3935ce
 
 require (
 	github.com/alecthomas/chroma/v2 v2.27.0
@@ -13,6 +10,8 @@ require (
 	github.com/gofrs/flock v0.13.0
 	github.com/pkg/errors v0.9.1
 	github.com/pmezard/go-difflib v1.0.0
+	github.com/spf13/cobra v1.10.2
+	github.com/spf13/pflag v1.0.10
 	github.com/stretchr/testify v1.11.1
 	github.com/yuin/goldmark v1.8.2
 	golang.org/x/net v0.56.0
@@ -27,6 +26,7 @@ require (
 	github.com/dlclark/regexp2/v2 v2.2.2 // indirect
 	github.com/godbus/dbus/v5 v5.2.2 // indirect
 	github.com/gonuts/binary v0.2.0 // indirect
+	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/keybase/go-keychain v0.0.1 // indirect
 	github.com/kr/text v0.2.0 // indirect
 	github.com/pierrec/lz4/v4 v4.1.27 // indirect

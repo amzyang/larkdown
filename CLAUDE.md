@@ -83,8 +83,8 @@ just clean          # 删除构建产物
 ### 目录结构
 
 ```
-cmd/           # CLI 入口 (urfave/cli v3)
-  main.go      # 命令注册（config, download, mirror, login, upload）
+cmd/           # CLI 入口 (spf13/cobra)
+  main.go      # 命令注册（config, download, mirror, auth, upload, publish, diff, open, ocr, skills, completion）
   download.go  # download/dl 子命令：单文档、批量文件夹、Wiki 递归下载
   mirror.go    # mirror 子命令：单向只下载同步为本地镜像目录（索引 + CLAUDE.md + 陈旧清理）
   follow.go    # --follow 执行器：主下载完成后 BFS 下载被引用文档到 _refs/
@@ -123,7 +123,7 @@ testdata/      # 测试数据：JSON (DocxBlock) + MD (期望输出) golden file
   - Fork GitHub: <https://github.com/amzyang/lark.git>
   - 上游 GitHub: <https://github.com/chyroc/lark.git> （复杂问题可参考 issues, discussions, pull requests）
 - `github.com/yuin/goldmark` - Markdown 解析（用于 md2blocks 反向转换）
-- `github.com/urfave/cli/v3` - CLI 框架
+- `github.com/spf13/cobra` - CLI 框架（shell 补全为 cobra 动态生成，`pwsh` 保留为 `completion powershell` 的兼容别名）
 
 ### 同步 Fork lark SDK
 

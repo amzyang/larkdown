@@ -7,69 +7,73 @@ import (
 	"time"
 
 	"github.com/amzyang/larkdown/core"
-	"github.com/urfave/cli/v3"
+	"github.com/spf13/cobra"
 )
 
-// loginFlags 返回 `auth login`（及隐藏别名 `login`）的 flag 集合。
+// newLoginCommand 构造 login 命令（flag 集 + RunE）。工厂返回新实例：一个 *cobra.Command
+// 只能挂一个父命令，`auth login` 与顶层隐藏别名 `login` 需各持一份。
 // --no-wait / --device-code 组成两段式登录（agent/CI/无头环境友好），--json 输出机读事件；
 // --port 已废弃、保留为隐藏 no-op，以免 `larkdown login --port 9999` 这类老脚本因未定义 flag 中断。
-func loginFlags() []cli.Flag {
-	return []cli.Flag{
-		&cli.BoolFlag{Name: "no-wait", Usage: "Request a device code, print it and exit without polling (for agent/CI two-step login)"},
-		&cli.StringFlag{Name: "device-code", Usage: "Resume polling with a device code from a prior --no-wait run"},
-		&cli.BoolFlag{Name: "json", Usage: "Emit machine-readable JSON events (device_authorization / authorized)"},
-		&cli.IntFlag{Name: "port", Hidden: true, Usage: "Deprecated: no-op (device flow needs no local callback)"},
+func newLoginCommand() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "login",
+		Short: "Login with Feishu OAuth device flow to get user_access_token",
+		RunE:  runLogin,
 	}
+	fl := cmd.Flags()
+	fl.Bool("no-wait", false, "Request a device code, print it and exit without polling (for agent/CI two-step login)")
+	fl.String("device-code", "", "Resume polling with a device code from a prior --no-wait run")
+	fl.Bool("json", false, "Emit machine-readable JSON events (device_authorization / authorized)")
+	fl.Int("port", 0, "Deprecated: no-op (device flow needs no local callback)")
+	_ = fl.MarkHidden("port")
+	return cmd
 }
 
-// runLogin 是 `auth login` / `login` 的共享 action。
-func runLogin(ctx context.Context, cmd *cli.Command) error {
+// runLogin 是 `auth login` / `login` 的共享 RunE。
+func runLogin(cmd *cobra.Command, args []string) error {
+	noWait, _ := cmd.Flags().GetBool("no-wait")
+	deviceCode, _ := cmd.Flags().GetString("device-code")
+	jsonOut, _ := cmd.Flags().GetBool("json")
 	return handleLoginCommand(loginOptions{
-		noWait:     cmd.Bool("no-wait"),
-		deviceCode: cmd.String("device-code"),
-		json:       cmd.Bool("json"),
+		noWait:     noWait,
+		deviceCode: deviceCode,
+		json:       jsonOut,
 	})
 }
 
 // newAuthCommand 构造 `larkdown auth` 命令组（login / status / logout）。
-func newAuthCommand() *cli.Command {
-	return &cli.Command{
-		Name:  "auth",
-		Usage: "Manage Feishu authentication (login / status / logout)",
-		Commands: []*cli.Command{
-			{
-				Name:   "login",
-				Usage:  "Login with Feishu OAuth device flow to get user_access_token",
-				Flags:  loginFlags(),
-				Action: runLogin,
-			},
-			{
-				Name:  "status",
-				Usage: "Show current authentication status (read-only, does not refresh)",
-				Action: func(ctx context.Context, cmd *cli.Command) error {
-					return handleAuthStatusCommand(ctx)
-				},
-			},
-			{
-				Name:  "logout",
-				Usage: "Revoke and clear the local user_access_token",
-				Action: func(ctx context.Context, cmd *cli.Command) error {
-					return handleLogoutCommand(ctx)
-				},
+func newAuthCommand() *cobra.Command {
+	auth := &cobra.Command{
+		Use:   "auth",
+		Short: "Manage Feishu authentication (login / status / logout)",
+		// 无 RunE：裸 `larkdown auth` 打印 help
+	}
+	auth.AddCommand(
+		newLoginCommand(),
+		&cobra.Command{
+			Use:   "status",
+			Short: "Show current authentication status (read-only, does not refresh)",
+			RunE: func(cmd *cobra.Command, args []string) error {
+				return handleAuthStatusCommand(cmd.Context())
 			},
 		},
-	}
+		&cobra.Command{
+			Use:   "logout",
+			Short: "Revoke and clear the local user_access_token",
+			RunE: func(cmd *cobra.Command, args []string) error {
+				return handleLogoutCommand(cmd.Context())
+			},
+		},
+	)
+	return auth
 }
 
 // newLoginAliasCommand 保留顶层 `login` 作为 `auth login` 的隐藏兼容别名（零迁移不破坏老脚本）。
-func newLoginAliasCommand() *cli.Command {
-	return &cli.Command{
-		Name:   "login",
-		Hidden: true,
-		Usage:  "Alias of 'auth login'",
-		Flags:  loginFlags(),
-		Action: runLogin,
-	}
+func newLoginAliasCommand() *cobra.Command {
+	cmd := newLoginCommand()
+	cmd.Hidden = true
+	cmd.Short = "Alias of 'auth login'"
+	return cmd
 }
 
 // formatAuthStatus 根据配置快照与当前时间生成 auth status 的展示行（纯函数，便于测试）。

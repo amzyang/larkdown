@@ -1,29 +1,65 @@
 package main
 
 import (
-	"context"
-	_ "embed"
-
-	"github.com/urfave/cli/v3"
+	"github.com/spf13/cobra"
 )
 
-//go:embed completions/larkdown.fish
-var fishCompletionScript string
-
-// configureShellCompletion 用手写的 fish 补全脚本替换 urfave/cli 自动生成的版本。
+// newCompletionCommand 构造 `larkdown completion` 命令：四种 shell 的补全脚本
+// 全部由 cobra 运行时生成（动态补全，与命令定义永不漂移）。
 //
-// urfave/cli v3 把 `completion` 做成父命令，bash/zsh/fish/pwsh 各是带独立 Action
-// 的子命令；`larkdown completion fish` 路由到 fish 子命令的 Action（父命令 Action 为 nil）。
-// 因此这里覆盖 fish 子命令的 Action，而非父命令。输出写 cmd.Root().Writer，与 urfave
-// 内置子命令一致，确保 brew 的 generate_completions_from_executable 能从 stdout 捕获。
-func configureShellCompletion(completionCmd *cli.Command) {
-	for _, sub := range completionCmd.Commands {
-		if sub.Name == "fish" {
-			sub.Action = func(ctx context.Context, cmd *cli.Command) error {
-				_, err := cmd.Root().Writer.Write([]byte(fishCompletionScript))
-				return err
-			}
-			return
-		}
+// 输出必须走 stdout：brew 的 generate_completions_from_executable 依赖
+// `larkdown completion bash|zsh|fish` 从 stdout 捕获脚本（.goreleaser.yaml）。
+// `pwsh` 保留为 powershell 的别名，兼容 urfave/cli 时代的子命令名。
+func newCompletionCommand() *cobra.Command {
+	completion := &cobra.Command{
+		Use:   "completion [bash|zsh|fish|powershell]",
+		Short: "Output shell completion script for bash, zsh, fish, or PowerShell",
+		Long: `Output shell completion script. Source the output to enable completion.
+
+  # bash (~/.bashrc)
+  source <(larkdown completion bash)
+
+  # zsh (~/.zshrc)
+  source <(larkdown completion zsh)
+
+  # fish
+  larkdown completion fish > ~/.config/fish/completions/larkdown.fish
+
+  # PowerShell
+  larkdown completion powershell | Out-String | Invoke-Expression
+
+Homebrew installs completions for bash/zsh/fish automatically.`,
 	}
+	completion.AddCommand(
+		&cobra.Command{
+			Use:   "bash",
+			Short: "Output bash completion script",
+			RunE: func(cmd *cobra.Command, args []string) error {
+				return cmd.Root().GenBashCompletionV2(cmd.OutOrStdout(), true)
+			},
+		},
+		&cobra.Command{
+			Use:   "zsh",
+			Short: "Output zsh completion script",
+			RunE: func(cmd *cobra.Command, args []string) error {
+				return cmd.Root().GenZshCompletion(cmd.OutOrStdout())
+			},
+		},
+		&cobra.Command{
+			Use:   "fish",
+			Short: "Output fish completion script",
+			RunE: func(cmd *cobra.Command, args []string) error {
+				return cmd.Root().GenFishCompletion(cmd.OutOrStdout(), true)
+			},
+		},
+		&cobra.Command{
+			Use:     "powershell",
+			Aliases: []string{"pwsh"},
+			Short:   "Output PowerShell completion script",
+			RunE: func(cmd *cobra.Command, args []string) error {
+				return cmd.Root().GenPowerShellCompletionWithDesc(cmd.OutOrStdout())
+			},
+		},
+	)
+	return completion
 }
