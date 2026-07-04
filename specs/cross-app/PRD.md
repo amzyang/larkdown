@@ -153,7 +153,7 @@ Markdown 附录)。当前 user-id 面**仅此三处**。
   3. **用真实含 @人评论的文档验证**:评论内 person 元素解析为 `@显示名`(而非 `@<原始 id>`)——
      同时验证决策 4 的 person id 类型假设是否成立。
   4. mention round-trip 行为不变。
-  5. `gofmt` + `make build` + `make test` 通过。
+  5. `gofmt` + `just build` + `just test` 通过。
 
 ## 文档同步
 

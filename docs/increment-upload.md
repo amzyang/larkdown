@@ -9,4 +9,4 @@
 
 你需要生成各种场景的测试文件来发现当前存在的问题，并用于后续验证增量上传的正确性
 
-你可以使用  /chrome-devtools-mcp:chrome-devtools 查看浏览器对应上次内容或者是 `make build; ./larkdown dl --debug` 来自我验证
+你可以使用  /chrome-devtools-mcp:chrome-devtools 查看浏览器对应上次内容或者是 `just build; ./larkdown dl --debug` 来自我验证

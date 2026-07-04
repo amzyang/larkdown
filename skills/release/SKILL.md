@@ -17,7 +17,7 @@ larkdown 通过 **push 一个 `v*` tag** 触发 `.github/workflows/release.yml` 
 按顺序执行，每步确认通过再进行下一步。
 
 ### 1. 发布前检查
-- `make test` 全绿、`make build` 成功。**测试不过不发布**——tag 一旦推送就触发对外 Release 与 Homebrew 更新，事后撤回成本高。
+- `just test` 全绿、`just build` 成功。**测试不过不发布**——tag 一旦推送就触发对外 Release 与 Homebrew 更新，事后撤回成本高。
 - `git branch --show-current` 确认在 `main`；`git status --short` 看工作树；`git rev-list --count origin/main..HEAD` / `..origin/main` 确认与远端领先/落后。
 
 ### 2. 提交并推送改动（若有未提交/未推送改动）
@@ -45,7 +45,7 @@ larkdown 通过 **push 一个 `v*` tag** 触发 `.github/workflows/release.yml` 
 - 向用户报告：Release 链接、版本号、产物列表、Homebrew tap 是否更新。
 
 ## 注意事项
-- **发布是对外操作**：tag 推送即触发公开 Release + Homebrew 更新；务必先确认 `make test` 绿、版本号无误再推 tag。
+- **发布是对外操作**：tag 推送即触发公开 Release + Homebrew 更新；务必先确认 `just test` 绿、版本号无误再推 tag。
 - 配置位置：GoReleaser 在仓库根 `.goreleaser.*`，CI 在 `.github/workflows/release.yml`（`on: push tags 'v*'`）。
 - CI 里 Node.js 弃用等 annotation 属基础设施提示，非发布失败，可忽略。
 - tag 用 annotated（`-a`）而非 lightweight，便于 changelog 与 `git describe`。
