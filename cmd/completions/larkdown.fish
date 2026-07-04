@@ -2,7 +2,7 @@
 
 function __fish_larkdown_no_subcommand
     for i in (commandline -opc)
-        if contains -- $i config download dl mirror login upload ul publish diff open ocr
+        if contains -- $i config download dl mirror login upload ul publish diff open ocr skills
             return 1
         end
     end
@@ -38,6 +38,7 @@ complete -c larkdown -f -n __fish_larkdown_no_subcommand -a publish  -d 'Publish
 complete -c larkdown -f -n __fish_larkdown_no_subcommand -a ocr      -d 'Recognize text from an image using Feishu AI OCR'
 complete -c larkdown -f -n __fish_larkdown_no_subcommand -a diff     -d 'Show diff between local markdown and remote Feishu document'
 complete -c larkdown -f -n __fish_larkdown_no_subcommand -a open     -d 'Open the source Feishu document URL in the browser'
+complete -c larkdown -f -n __fish_larkdown_no_subcommand -a skills   -d 'Show how to install and upgrade the larkdown agent skill for Claude Code'
 
 # config flags
 complete -c larkdown -f -n '__fish_larkdown_using_command config' -l appId     -d 'Set app id for the OPEN API'

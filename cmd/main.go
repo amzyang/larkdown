@@ -259,6 +259,13 @@ func newRootCommand() *cli.Command {
 					return handleOCRCommand(ctx, imagePath)
 				},
 			},
+			{
+				Name:  "skills",
+				Usage: "Show how to install and upgrade the larkdown agent skill for Claude Code",
+				Action: func(ctx context.Context, cmd *cli.Command) error {
+					return handleSkillsCommand()
+				},
+			},
 		},
 	}
 }
