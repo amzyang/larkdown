@@ -63,7 +63,7 @@ func TestNormalizeMarkdown(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := NormalizeMarkdown(tt.input)
+			got, err := NormalizeMarkdown(tt.input, "")
 			require.NoError(t, err)
 			got = strings.TrimRight(got, "\n") + "\n"
 			want := strings.TrimRight(tt.want, "\n") + "\n"
@@ -75,9 +75,9 @@ func TestNormalizeMarkdown(t *testing.T) {
 func TestNormalizeIdempotent(t *testing.T) {
 	// normalize 两次应产生相同结果
 	input := "| A       | B    |\n| ------- | ---- |\n| hello   | world|\n\n```sh\ncode\n```\n\n- item 1\n- item 2\n"
-	first, err := NormalizeMarkdown(input)
+	first, err := NormalizeMarkdown(input, "")
 	require.NoError(t, err)
-	second, err := NormalizeMarkdown(first)
+	second, err := NormalizeMarkdown(first, "")
 	require.NoError(t, err)
 	assert.Equal(t, first, second)
 }

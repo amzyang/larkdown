@@ -78,6 +78,8 @@ just clean          # 删除构建产物
 
 **图片/文件免重传（`media_manifest.go`）：** 手写文件名的本地图片/文件（非 `<token>_原名` 下载产物）无 token，签名 `media:new:<idx>` 与远程 `media:<token>` 命名空间隔离、永不匹配，会每次重传素材（飞书素材不幂等、token 抖动、`block_id` 被删除重建）。中心化边车 `<UserConfigDir>/feishu2md/media/<document_id>.yaml` 持久化「markdown 路径 → {token, md5}」映射：上传前 `applyMediaTokenMappings` 按路径查映射写回 `Image/File.Token`（校验 token 仍在远程），命中后签名与远程 Equal → 进第一档「Equal 内容检测」用边车基准 md5（`mediaChanged`，不依赖下载缓存）判定——内容未变跳过、已变走 `replace_image`/`replace_file` 原地替换**保 block_id**；各上传点 `recordMediaMapping` 累积、`persistMediaMappings` 刷新。路径即身份锚点：改图（路径不变内容变）→ md5 不符 → 原地替换保 id；重命名（路径变）→ 失配 → 当新图重传。与画板互补（画板按源 hash、媒体按路径），同解「本地无 token、签名隔离」；视频即 File 附件，一并覆盖。`--dryrun` 的「媒体内容替换」段会列出将被 `replace` 的媒体（内容真变才出现），用于核验增量是否真识别了改动。
 
+**本地文件链接（md2blocks/uploader）：** 正文行内链接指向本地存在的文件时分两类。`.md` 为**文档交叉引用**：读目标文件 frontmatter 的 `source` 转成指向对应飞书文档的普通链接（`resolveLocalMdLink`）；目标未上传则降级纯文本——块签名包含 link URL，待目标上传后再传本文档，增量 diff 会识别变更并原地 `update_text_elements` 补上链接。其余扩展名为**附件**：生成空 file 块后传素材再 `replace_file`。file 块无法经 descendant API 创建（服务端要求 file 挂在自动生成的 View 块下，显式 `page→file` 树报 1770030 invalid parent children relation），创建请求也不接受 `name` 等字段（1770001）：`flushFlatBlocks` 在 file 块处切分批次，file 块单独走官方 children API（`client.CreateDocxFileBlock`，请求体为空 `file:{}`），从响应（或补查 view 子块）取真实 file 块 id 供素材上传与 `replace_file`——文件名由素材文件名决定。
+
 **改进路径**：`docs_ai/v1` 的 `block_replace` 已用于第二档跨类型 text-like 替换；`block_move_after` 用于实体位置校正（`BlockMoveAfter` / `reconcileEntityPositions`）。**容器块（table/callout/quote_container）走 docs_ai 尚未落地**——docs_ai markdown 模式下 callout 须用 XML（markdown 会被当普通引用块）、table 的合并/列宽/背景色无法用 markdown 表达，需先引入 `DescendantGroup→docs_ai XML` 序列化器才能开放（届时跨类型/容器块可统一走 `block_replace`）。`str_replace`（子串级、保 block_id）对同类型文本块无增量价值（已由 batch_update 覆盖）。
 
 ### 目录结构

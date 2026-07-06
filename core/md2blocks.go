@@ -207,10 +207,10 @@ func (c *converter) convertParagraphContent(parent ast.Node) {
 			c.convertImage(img)
 			continue
 		}
-		// Markdown link → 本地文件检测
+		// Markdown link → 本地文件检测（.md 为文档交叉引用，走 walkInline 转 wiki 链接）
 		if link, ok := child.(*ast.Link); ok {
 			dest := string(link.Destination)
-			if c.isLocalFile(dest) {
+			if c.isLocalFile(dest) && !isLocalMdLink(dest) {
 				flushText()
 				name := extractLinkText(link, c.source)
 				if name == "" {
@@ -1345,7 +1345,9 @@ func (c *converter) walkInline(node ast.Node, style *lark.DocxTextElementStyle, 
 	case *ast.Link:
 		newStyle := cloneStyle(style)
 		dest := string(n.Destination)
-		if isValidLinkURL(dest) {
+		if wikiURL := c.resolveLocalMdLink(dest); wikiURL != "" {
+			newStyle.Link = &lark.DocxTextElementStyleLink{URL: wikiURL}
+		} else if isValidLinkURL(dest) {
 			newStyle.Link = &lark.DocxTextElementStyleLink{
 				URL: dest,
 			}
@@ -1612,6 +1614,32 @@ func (c *converter) isLocalFile(dest string) bool {
 	}
 	info, err := os.Stat(path)
 	return err == nil && !info.IsDir()
+}
+
+// isLocalMdLink 判断链接目标是否为 markdown 文件（文档交叉引用，不作附件处理）
+func isLocalMdLink(dest string) bool {
+	return strings.EqualFold(filepath.Ext(dest), ".md")
+}
+
+// resolveLocalMdLink 解析本地 .md 交叉引用：目标已上传（frontmatter 带 source）时
+// 返回其飞书 URL，否则返回空串（降级纯文本，待目标上传后由增量 diff 补链接）。
+func (c *converter) resolveLocalMdLink(dest string) string {
+	if !isLocalMdLink(dest) || !c.isLocalFile(dest) {
+		return ""
+	}
+	path := dest
+	if !filepath.IsAbs(path) {
+		path = filepath.Join(c.mdDir, path)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	fm, _, err := ParseFrontMatter(string(data))
+	if err != nil || fm == nil {
+		return ""
+	}
+	return fm.Source
 }
 
 // isValidLinkURL 判断链接 URL 是否可被飞书 link.url 接受（必须带 scheme，

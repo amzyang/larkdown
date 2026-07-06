@@ -1514,8 +1514,10 @@ func (u *Uploader) writeResult(ctx context.Context, documentID, filePath string,
 	return nil
 }
 
-// flushFlatBlocks 批量插入 flat blocks（非 descendant 结构的普通块）
-// 返回创建的块列表，用于后续图片/文件上传
+// flushFlatBlocks 批量插入 flat blocks（非 descendant 结构的普通块）。
+// File 块无法经 descendant API 创建（见 CreateDocxFileBlock），单独走官方 children API，
+// 其余块在 File 块处切分后批量走 descendant。返回的块列表与 flatBatch 逐项对齐，
+// 用于后续图片/文件上传。
 func (u *Uploader) flushFlatBlocks(
 	ctx context.Context,
 	documentID string,
@@ -1530,51 +1532,85 @@ func (u *Uploader) flushFlatBlocks(
 	const descendantBatchSize = 1000
 	var result []*lark.DocxBlock
 
-	for i := 0; i < len(flatBatch); i += descendantBatchSize {
-		end := min(i+descendantBatchSize, len(flatBatch))
-		batch := flatBatch[i:end]
+	flushDescendants := func(batch []*lark.DocxBlock) error {
+		for i := 0; i < len(batch); i += descendantBatchSize {
+			end := min(i+descendantBatchSize, len(batch))
+			sub := batch[i:end]
 
-		childrenIDs := make([]string, len(batch))
-		descendants := make([]*lark.DocxBlock, len(batch))
-		tempToOrigIdx := make(map[string]int)
-		for j, block := range batch {
-			tempID := fmt.Sprintf("%s_%d", tempIDPrefix, *tempIDCounter)
-			*tempIDCounter++
-			childrenIDs[j] = tempID
-			clone := *block
-			clone.BlockID = tempID
-			descendants[j] = &clone
-			tempToOrigIdx[tempID] = i + j
-		}
+			childrenIDs := make([]string, len(sub))
+			descendants := make([]*lark.DocxBlock, len(sub))
+			tempToOrigIdx := make(map[string]int)
+			for j, block := range sub {
+				tempID := fmt.Sprintf("%s_%d", tempIDPrefix, *tempIDCounter)
+				*tempIDCounter++
+				childrenIDs[j] = tempID
+				clone := *block
+				clone.BlockID = tempID
+				descendants[j] = &clone
+				tempToOrigIdx[tempID] = j
+			}
 
-		descResult, err := u.createDescendantWithMentionFallback(ctx, documentID, documentID, childrenIDs, descendants, insertIndex)
-		if err != nil {
-			return nil, fmt.Errorf("插入块失败: %w", err)
-		}
+			descResult, err := u.createDescendantWithMentionFallback(ctx, documentID, documentID, childrenIDs, descendants, insertIndex)
+			if err != nil {
+				return fmt.Errorf("插入块失败: %w", err)
+			}
 
-		boardByBlockID := make(map[string]*lark.DocxBlockBoard)
-		for _, child := range descResult.Children {
-			if child.Board != nil {
-				boardByBlockID[child.BlockID] = child.Board
+			boardByBlockID := make(map[string]*lark.DocxBlockBoard)
+			for _, child := range descResult.Children {
+				if child.Board != nil {
+					boardByBlockID[child.BlockID] = child.Board
+				}
+			}
+
+			realIDMap := make(map[string]string)
+			for _, rel := range descResult.BlockIDRelations {
+				realIDMap[rel.TemporaryBlockID] = rel.BlockID
+			}
+			for _, tempID := range childrenIDs {
+				realID := realIDMap[tempID]
+				result = append(result, &lark.DocxBlock{
+					BlockID:   realID,
+					BlockType: sub[tempToOrigIdx[tempID]].BlockType,
+					Board:     boardByBlockID[realID],
+				})
+			}
+
+			if insertIndex >= 0 {
+				insertIndex += len(sub)
 			}
 		}
+		return nil
+	}
 
-		realIDMap := make(map[string]string)
-		for _, rel := range descResult.BlockIDRelations {
-			realIDMap[rel.TemporaryBlockID] = rel.BlockID
+	var pending []*lark.DocxBlock
+	flushPending := func() error {
+		if len(pending) == 0 {
+			return nil
 		}
-		for _, tempID := range childrenIDs {
-			realID := realIDMap[tempID]
-			result = append(result, &lark.DocxBlock{
-				BlockID:   realID,
-				BlockType: batch[tempToOrigIdx[tempID]-i].BlockType,
-				Board:     boardByBlockID[realID],
-			})
-		}
+		err := flushDescendants(pending)
+		pending = nil
+		return err
+	}
 
+	for _, block := range flatBatch {
+		if block.BlockType != lark.DocxBlockTypeFile {
+			pending = append(pending, block)
+			continue
+		}
+		if err := flushPending(); err != nil {
+			return nil, err
+		}
+		fileID, err := u.client.CreateDocxFileBlock(ctx, documentID, documentID, insertIndex)
+		if err != nil {
+			return nil, fmt.Errorf("插入文件块失败: %w", err)
+		}
+		result = append(result, &lark.DocxBlock{BlockID: fileID, BlockType: block.BlockType})
 		if insertIndex >= 0 {
-			insertIndex += len(batch)
+			insertIndex++
 		}
+	}
+	if err := flushPending(); err != nil {
+		return nil, err
 	}
 	return result, nil
 }

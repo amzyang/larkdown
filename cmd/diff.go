@@ -125,7 +125,7 @@ func handleDiffCommand(filePath string) error {
 	client := createClientFromConfig(ctx, config, configPath)
 
 	// 规范化本地 markdown：通过 md→DocxBlocks→md 管线消除格式差异
-	normalizedLocal, err := core.NormalizeMarkdown(localBody)
+	normalizedLocal, err := core.NormalizeMarkdown(localBody, filepath.Dir(filePath))
 	if err != nil {
 		return fmt.Errorf("规范化本地文件失败: %w", err)
 	}

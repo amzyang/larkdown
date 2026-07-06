@@ -2390,3 +2390,92 @@ func TestForkPatchSerialization(t *testing.T) {
 			"AddOns 加 omitempty 后 nil 时不应出现在 JSON")
 	})
 }
+
+// --- 本地 .md 交叉引用 ---
+
+func writeLocalMd(t *testing.T, dir, name, content string) {
+	t.Helper()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644))
+}
+
+func findTextRun(elements []*lark.DocxTextElement, content string) *lark.DocxTextElement {
+	for _, el := range elements {
+		if el.TextRun != nil && el.TextRun.Content == content {
+			return el
+		}
+	}
+	return nil
+}
+
+func TestConvertLocalMdLinkResolvesToWikiURL(t *testing.T) {
+	dir := t.TempDir()
+	writeLocalMd(t, dir, "a.md", "# A\n\n正文\n<!--\nsource: https://feishu.cn/wiki/AAAA\n-->\n")
+
+	result, err := ConvertMarkdownToDocxBlocks("见 [A 文档](./a.md)（附）", dir)
+	require.NoError(t, err)
+	require.Len(t, result.TopBlocks, 1, ".md 交叉引用不应拆分段落")
+	assert.Empty(t, result.FileIndices, ".md 交叉引用不应生成 File 块")
+
+	linked := findTextRun(result.TopBlocks[0].Text.Elements, "A 文档")
+	require.NotNil(t, linked)
+	require.NotNil(t, linked.TextRun.TextElementStyle.Link)
+	assert.Equal(t, "https://feishu.cn/wiki/AAAA", linked.TextRun.TextElementStyle.Link.URL)
+}
+
+func TestConvertLocalMdLinkWithoutSourceDegradesToText(t *testing.T) {
+	dir := t.TempDir()
+	writeLocalMd(t, dir, "b.md", "# B\n\n未上传\n")
+
+	result, err := ConvertMarkdownToDocxBlocks("见 [B 文档](./b.md)（附）", dir)
+	require.NoError(t, err)
+	require.Len(t, result.TopBlocks, 1)
+	assert.Empty(t, result.FileIndices)
+
+	degraded := findTextRun(result.TopBlocks[0].Text.Elements, "B 文档")
+	require.NotNil(t, degraded)
+	assert.Nil(t, degraded.TextRun.TextElementStyle.Link)
+}
+
+func TestConvertLocalMdLinkInsideListItem(t *testing.T) {
+	dir := t.TempDir()
+	writeLocalMd(t, dir, "a.md", "# A\n<!--\nsource: https://feishu.cn/wiki/AAAA\n-->\n")
+
+	result, err := ConvertMarkdownToDocxBlocks("- 引用 [A](./a.md) 结尾", dir)
+	require.NoError(t, err)
+	require.Len(t, result.TopBlocks, 1)
+
+	linked := findTextRun(result.TopBlocks[0].Bullet.Elements, "A")
+	require.NotNil(t, linked)
+	require.NotNil(t, linked.TextRun.TextElementStyle.Link)
+	assert.Equal(t, "https://feishu.cn/wiki/AAAA", linked.TextRun.TextElementStyle.Link.URL)
+}
+
+func TestConvertLocalNonMdLinkStaysFileBlock(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "x.zip"), []byte("zip"), 0o644))
+
+	result, err := ConvertMarkdownToDocxBlocks("附件 [数据包](./x.zip) 在此", dir)
+	require.NoError(t, err)
+	require.Len(t, result.FileIndices, 1)
+
+	fileBlock := result.TopBlocks[result.FileIndices[0]]
+	assert.Equal(t, lark.DocxBlockTypeFile, fileBlock.BlockType)
+	assert.Equal(t, "数据包", fileBlock.File.Name)
+	assert.Equal(t, "./x.zip", result.FilePaths[0])
+}
+
+func TestLocalMdLinkLateResolutionChangesSignature(t *testing.T) {
+	dir := t.TempDir()
+	md := "引用 [A](./a.md) 文档"
+
+	writeLocalMd(t, dir, "a.md", "# A\n\n未上传\n")
+	before, err := ConvertMarkdownToDocxBlocks(md, dir)
+	require.NoError(t, err)
+
+	writeLocalMd(t, dir, "a.md", "# A\n\n已上传\n<!--\nsource: https://feishu.cn/wiki/AAAA\n-->\n")
+	after, err := ConvertMarkdownToDocxBlocks(md, dir)
+	require.NoError(t, err)
+
+	// 引用文件后补上传后，同一 markdown 的块签名应变化，驱动增量 diff 原地补链接
+	assert.NotEqual(t, SignatureFromLocalEntry(before, 0), SignatureFromLocalEntry(after, 0))
+}

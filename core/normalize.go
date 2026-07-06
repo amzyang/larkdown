@@ -8,8 +8,9 @@ import (
 
 // NormalizeMarkdown 将 markdown 通过 md→DocxBlocks→md 管线规范化，
 // 消除格式差异（表格对齐、代码围栏语言、空行等），只保留语义内容。
-func NormalizeMarkdown(markdown string) (string, error) {
-	result, err := ConvertMarkdownToDocxBlocks(markdown, "")
+// mdDir 为 markdown 所在目录，用于解析本地文件/.md 交叉引用链接（与上传路径一致）。
+func NormalizeMarkdown(markdown, mdDir string) (string, error) {
+	result, err := ConvertMarkdownToDocxBlocks(markdown, mdDir)
 	if err != nil {
 		return "", err
 	}

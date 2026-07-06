@@ -1275,6 +1275,56 @@ func (c *Client) CreateDocxDescendant(
 	return resp, nil
 }
 
+// CreateDocxFileBlock 经官方 children API 创建空文件块。descendant API 无法创建 file 块：
+// 服务端会为 file 自动包一层 View 块（view 是 file 的 parent），descendant 请求显式声明
+// page→file 关系会被 1770030 invalid parent children relation 拒绝。
+// 创建时仅接受空 file 结构（name 等字段会被 1770001 invalid param 拒绝），
+// 文件名由后续素材上传的文件名决定。
+// 返回真实 file 块 id——素材上传（parent_node）与 replace_file 都必须用 file 块 id 而非 view 块 id。
+func (c *Client) CreateDocxFileBlock(ctx context.Context, documentID, parentBlockID string, index int) (string, error) {
+	revisionID := int64(-1)
+	indexInt64 := int64(index)
+	resp, _, err := c.larkClient.Drive.CreateDocxBlock(ctx, &lark.CreateDocxBlockReq{
+		DocumentID:         documentID,
+		BlockID:            parentBlockID,
+		DocumentRevisionID: &revisionID,
+		UserIDType:         userIDTypePtr(), // 全局用户身份策略：统一 union_id
+		Children: []*lark.DocxBlock{{
+			BlockType: lark.DocxBlockTypeFile,
+			File:      &lark.DocxBlockFile{},
+		}},
+		Index: &indexInt64,
+	}, c.methodOptions()...)
+	if err != nil {
+		return "", fmt.Errorf("创建文件块失败: %w", err)
+	}
+	for _, b := range resp.Children {
+		if b.BlockType == lark.DocxBlockTypeFile {
+			return b.BlockID, nil
+		}
+	}
+	// 响应仅含 View 包装块：从 view 的子块中取 file 块
+	for _, b := range resp.Children {
+		if b.BlockType != lark.DocxBlockTypeView {
+			continue
+		}
+		listResp, _, err := c.larkClient.Drive.GetDocxBlockListOfBlock(ctx, &lark.GetDocxBlockListOfBlockReq{
+			DocumentID: documentID,
+			BlockID:    b.BlockID,
+			UserIDType: userIDTypePtr(),
+		}, c.methodOptions()...)
+		if err != nil {
+			return "", fmt.Errorf("获取 view 块子块失败: %w", err)
+		}
+		for _, child := range listResp.Items {
+			if child.BlockType == lark.DocxBlockTypeFile {
+				return child.BlockID, nil
+			}
+		}
+	}
+	return "", fmt.Errorf("创建文件块后未在响应中找到 file 块")
+}
+
 // MergeTableCells 合并表格单元格。
 func (c *Client) MergeTableCells(ctx context.Context, documentID, blockID string, region MergeRegion) error {
 	revisionID := int64(-1)
