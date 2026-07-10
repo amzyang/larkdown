@@ -507,7 +507,10 @@ func handleDownloadCommand(url string) error {
 	}
 
 	ctx := context.Background()
-	client := createClientFromConfig(ctx, config, configPath)
+	client, err := createClientFromConfig(ctx, config, configPath)
+	if err != nil {
+		return err
+	}
 
 	// 解析 URL 类型
 	parsed, err := utils.ParseFeishuUrl(url)

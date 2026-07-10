@@ -14,9 +14,16 @@ import (
 
 var version = "v2-test"
 
+// 认证身份（全局 --as flag 取值，对齐 lark-cli 的 --as user|bot 语义）
+const (
+	identityUser = "user"
+	identityBot  = "bot"
+)
+
 // globalOpts 全局选项
 var globalOpts = struct {
 	debug      bool
+	as         string
 	clientOpts *core.ClientOptions
 }{}
 
@@ -31,9 +38,15 @@ func (e *exitError) Error() string { return e.msg }
 
 func exitWithMessage(msg string, code int) error { return &exitError{msg: msg, code: code} }
 
-// createClientFromConfig 从配置文件创建客户端，处理 token 刷新和降级逻辑。
+// createClientFromConfig 按全局身份策略创建客户端。
+// 默认 user 策略：user_access_token 是唯一隐式通道（过期自动刷新），未登录/刷新失败直接报错，
+// 不再静默降级；应用凭证 (tenant_access_token) 仅在显式 --as bot 时使用。
 // 认证相关提示一律走 stderr，避免污染可管道化的 stdout 输出。
-func createClientFromConfig(ctx context.Context, config *core.Config, configPath string) *core.Client {
+func createClientFromConfig(ctx context.Context, config *core.Config, configPath string) (*core.Client, error) {
+	if globalOpts.as == identityBot {
+		fmt.Fprintln(os.Stderr, "使用认证方式: tenant_access_token (应用凭证, --as bot)")
+		return core.NewClient(config.Feishu.AppId, config.Feishu.AppSecret, globalOpts.clientOpts), nil
+	}
 	if config.Feishu.HasValidUserToken() {
 		fmt.Fprintln(os.Stderr, "使用认证方式: user_access_token")
 		return core.NewClientWithUserToken(
@@ -41,7 +54,7 @@ func createClientFromConfig(ctx context.Context, config *core.Config, configPath
 			config.Feishu.AppSecret,
 			config.Feishu.UserAccessToken,
 			globalOpts.clientOpts,
-		)
+		), nil
 	}
 	if config.Feishu.NeedsRefresh() {
 		fmt.Fprintln(os.Stderr, "Token 已过期，正在刷新...")
@@ -63,15 +76,17 @@ func createClientFromConfig(ctx context.Context, config *core.Config, configPath
 				config.Feishu.AppSecret,
 				config.Feishu.UserAccessToken,
 				globalOpts.clientOpts,
-			)
+			), nil
 		case core.RefreshOutcomeTokenInvalidCleared:
-			fmt.Fprintf(os.Stderr, "user_access_token 已失效（%v），请重新执行 larkdown auth login；本次使用应用凭证 (tenant_access_token)\n", err)
-		case core.RefreshOutcomeTransientFailure:
-			fmt.Fprintf(os.Stderr, "刷新 token 失败（网络波动？%v），本次使用应用凭证；token 保留，下次自动重试\n", err)
+			return nil, fmt.Errorf("user_access_token 已失效（%v）。请重新执行 larkdown auth login，或加 --as bot 使用应用凭证 (tenant_access_token)", err)
+		default: // RefreshOutcomeTransientFailure
+			return nil, fmt.Errorf("刷新 user_access_token 失败（网络波动？%v）。token 已保留、稍后重试即可；或加 --as bot 使用应用凭证 (tenant_access_token)", err)
 		}
 	}
-	fmt.Fprintln(os.Stderr, "使用认证方式: tenant_access_token (应用凭证)")
-	return core.NewClient(config.Feishu.AppId, config.Feishu.AppSecret, globalOpts.clientOpts)
+	if config.Feishu.UserAccessToken != "" || config.Feishu.RefreshToken != "" {
+		return nil, errors.New("登录已过期（refresh_token 失效），请重新执行 larkdown auth login，或加 --as bot 使用应用凭证 (tenant_access_token)")
+	}
+	return nil, errors.New("当前未登录：larkdown 默认使用用户身份（user_access_token）。请先执行 larkdown auth login；批量自动化场景可加 --as bot 使用应用凭证 (tenant_access_token)")
 }
 
 // mdFileCompletion 生成「首个位置参数补全 .md 文件」的 ValidArgsFunction；
@@ -331,13 +346,20 @@ func newRootCommand() *cobra.Command {
 		SilenceErrors:     true,
 		SilenceUsage:      true,
 		CompletionOptions: cobra.CompletionOptions{DisableDefaultCmd: true},
-		// 为所有子命令构造客户端选项
-		PersistentPreRun: func(cmd *cobra.Command, args []string) {
+		// 为所有子命令构造客户端选项，并校验全局身份取值
+		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 			globalOpts.clientOpts = &core.ClientOptions{Debug: globalOpts.debug}
+			if globalOpts.as != identityUser && globalOpts.as != identityBot {
+				return exitWithMessage(fmt.Sprintf("--as must be 'user' or 'bot' (got %q)", globalOpts.as), 1)
+			}
+			return nil
 		},
 		// 无 RunE：裸 larkdown 打印 help 到 stdout，exit 0
 	}
 	root.PersistentFlags().BoolVar(&globalOpts.debug, "debug", false, "Enable HTTP request/response logging to stderr (JSONL format)")
+	root.PersistentFlags().StringVar(&globalOpts.as, "as", identityUser, "Identity for Feishu API calls: user (user_access_token, default) or bot (tenant_access_token app credentials)")
+	_ = root.RegisterFlagCompletionFunc("as", cobra.FixedCompletions(
+		[]cobra.Completion{identityUser, identityBot}, cobra.ShellCompDirectiveNoFileComp))
 	// flag 解析错误：单行错误 + --help 提示（不 dump 整页 usage），退出码 1
 	root.SetFlagErrorFunc(func(cmd *cobra.Command, err error) error {
 		return &exitError{

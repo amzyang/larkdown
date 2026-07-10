@@ -40,9 +40,12 @@ func handlePublishCommand(path string) error {
 	}
 
 	ctx := context.Background()
-	client := createClientFromConfig(ctx, config, configPath)
+	client, err := createClientFromConfig(ctx, config, configPath)
+	if err != nil {
+		return err
+	}
 	if !client.HasUserToken() {
-		return fmt.Errorf("发布妙搭应用需要 user_access_token，请先执行 larkdown login")
+		return fmt.Errorf("发布妙搭应用仅支持用户身份（user_access_token），不支持 --as bot；请先执行 larkdown auth login")
 	}
 
 	// 解析复用的 app_id：--app-id 优先，其次读 manifest，再次新建

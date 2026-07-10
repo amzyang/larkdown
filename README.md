@@ -73,6 +73,14 @@ larkdown auth logout         # 撤销并清除本地 user_access_token
 
 > 旧命令 `larkdown login` 仍作为 `larkdown auth login` 的隐藏别名保留，老脚本无需修改。
 
+**身份策略**：所有命令默认以**用户身份**（`user_access_token`）调用飞书 API——数据可见范围即你本人在飞书中的可见范围，评论中的用户真实姓名等信息也随用户身份获取，无需为应用单独申请通讯录权限范围/可见范围审批。token 过期自动刷新；未登录或登录失效会直接报错提示 `larkdown auth login`，**不再静默降级**到应用凭证。批量自动化等需要应用身份（`tenant_access_token`）的场景，显式加全局选项 `--as bot`：
+
+```bash
+larkdown --as bot download <url>   # 显式使用应用凭证（bot 身份）
+```
+
+> 注意：bot 身份下可见范围与通讯录数据范围由应用配置决定（需在开发者后台配置并经管理员审批）；`search` / `publish` 仅支持用户身份。
+
 ## 如何使用
 
 ### 命令行
@@ -93,7 +101,7 @@ larkdown auth logout         # 撤销并清除本地 user_access_token
 | `search`   | -    | 搜索当前用户可见的云文档/Wiki            |
 | `ocr`      | -    | 识别图片中的文字（飞书 AI OCR）          |
 
-全局选项：`--debug` 启用 HTTP 日志
+全局选项：`--debug` 启用 HTTP 日志；`--as user|bot` 选择调用身份（默认 `user`，即 user_access_token；`bot` 为应用凭证 tenant_access_token）
 
 #### config 命令
 

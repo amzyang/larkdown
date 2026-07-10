@@ -46,8 +46,9 @@ func TestFormatAuthStatusNoUserToken(t *testing.T) {
 
 	joined := strings.Join(formatAuthStatus(cfg, "/p", now), "\n")
 
-	assert.Contains(t, joined, "tenant_access_token（应用凭证）")
+	assert.Contains(t, joined, "未登录")
 	assert.Contains(t, joined, "larkdown auth login")
+	assert.Contains(t, joined, "--as bot")
 }
 
 func TestFormatAuthStatusShowsRefreshExpiry(t *testing.T) {

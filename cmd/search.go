@@ -41,9 +41,12 @@ func handleSearchCommand(ctx context.Context, query string) error {
 	if err != nil {
 		return err
 	}
-	client := createClientFromConfig(ctx, config, configPath)
+	client, err := createClientFromConfig(ctx, config, configPath)
+	if err != nil {
+		return err
+	}
 	if !client.HasUserToken() {
-		return exitWithMessage("search 需要用户身份（user_access_token），请先执行 larkdown auth login", 1)
+		return exitWithMessage("search 仅支持用户身份（user_access_token），不支持 --as bot；请先执行 larkdown auth login", 1)
 	}
 
 	resp, err := client.SearchDocWiki(ctx, buildSearchRequest(query, searchOpts))

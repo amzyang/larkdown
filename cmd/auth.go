@@ -101,7 +101,7 @@ func formatAuthStatus(cfg core.FeishuConfig, configPath string, now time.Time) [
 	case (cfg.UserAccessToken != "" || cfg.RefreshToken != "") && refreshExpired:
 		lines = append(lines, "认证方式: 登录已过期（刷新令牌失效），请重新执行 larkdown auth login")
 	default:
-		lines = append(lines, "认证方式: tenant_access_token（应用凭证）；可用 larkdown auth login 获取用户身份")
+		lines = append(lines, "认证方式: 未登录；命令默认使用用户身份（user_access_token），请执行 larkdown auth login（--as bot 可显式使用应用凭证 tenant_access_token）")
 	}
 	return lines
 }
@@ -171,6 +171,6 @@ func handleLogoutCommand(ctx context.Context) error {
 		return fmt.Errorf("清除本地 token 失败: %w", err)
 	}
 
-	fmt.Println("已登出，本地 token 已清除；后续命令将使用应用凭证 (tenant_access_token)")
+	fmt.Println("已登出，本地 token 已清除；后续命令请重新执行 larkdown auth login，或加 --as bot 使用应用凭证 (tenant_access_token)")
 	return nil
 }

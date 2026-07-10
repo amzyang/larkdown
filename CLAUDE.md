@@ -171,32 +171,37 @@ git merge upstream/master
 
 ### 认证方式
 
-支持两种认证方式：
+支持两种认证身份（对齐 lark-cli 的 `--as user|bot` 模型），**user 为默认策略**：
 
 | 方式                | 说明                               | 使用场景                 |
 | ------------------- | ---------------------------------- | ------------------------ |
-| tenant_access_token | 应用级认证，使用 AppID + AppSecret | 默认方式，适合批量自动化 |
-| user_access_token   | 用户级认证，通过 OAuth 设备码流程登录获取 | 访问用户个人有权限的文档 |
+| user_access_token   | 用户级认证，通过 OAuth 设备码流程登录获取 | **默认身份**；数据范围随用户本人可见范围（含评论真实姓名等通讯录数据，无需应用侧通讯录权限范围审批） |
+| tenant_access_token | 应用级认证，使用 AppID + AppSecret | 仅显式 `--as bot` 时使用，适合批量自动化；可见范围/通讯录范围由应用配置与审批决定 |
+
+**策略要点**：未登录或登录失效时命令直接报错并提示 `larkdown auth login`，**不静默降级**到应用凭证；应用凭证仅在显式传入全局 flag `--as bot` 时使用（`search`/`publish` 仅支持 user 身份）。
 
 **使用流程**：
 
 ```bash
-# 1. 配置应用凭证
+# 1. 配置应用凭证（设备码流程与 --as bot 都需要）
 larkdown config --appId <id> --appSecret <secret>
 
-# 2. (可选) OAuth 设备码流程登录获取 user_access_token（旧命令 larkdown login 仍作隐藏别名可用）
+# 2. OAuth 设备码流程登录获取 user_access_token（默认身份必需；旧命令 larkdown login 仍作隐藏别名可用）
 #    打印 verification URL + user code（并尽力自动打开浏览器），授权后阻塞轮询直到完成；无需本地回调 server
 larkdown auth login
 #    两段式（agent/CI/无头友好）：先 --no-wait 立即返回 device_code+URL，人授权后再 --device-code 换令牌；--json 输出机读事件
 #    larkdown auth login --no-wait --json  然后  larkdown auth login --device-code <code> --json
 
-# 3. 下载文档（优先使用 user_access_token，过期自动刷新，失败降级到应用凭证）
+# 3. 下载文档（默认 user_access_token，过期自动刷新；未登录/刷新失败直接报错，不降级）
 larkdown download <url>
+
+# 显式使用应用身份（tenant_access_token，批量自动化）
+larkdown --as bot download <url>
 
 # 诊断当前认证状态（只读，不触发刷新）
 larkdown auth status
 
-# 撤销并清除本地 user_access_token，回落应用凭证
+# 撤销并清除本地 user_access_token（之后需重新 login，或 --as bot 走应用凭证）
 larkdown auth logout
 ```
 

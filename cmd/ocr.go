@@ -29,7 +29,10 @@ func handleOCRCommand(ctx context.Context, imagePath string) error {
 	if err != nil {
 		return err
 	}
-	client := createClientFromConfig(ctx, config, configPath)
+	client, err := createClientFromConfig(ctx, config, configPath)
+	if err != nil {
+		return err
+	}
 
 	resp, _, err := client.RecognizeBasicImage(ctx, &lark.RecognizeBasicImageReq{
 		Image: &encoded,

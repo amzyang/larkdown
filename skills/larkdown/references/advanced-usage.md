@@ -49,14 +49,14 @@ brew install amzyang/tap/larkdown
 
 登录走 **OAuth 2.0 设备码流程（device flow）**：`larkdown auth login` 申请设备码、展示授权 URL + 验证码（尽力打开浏览器），用户在任意设备完成授权后轮询换取 `user_access_token` + `refresh_token`，并记录各自过期时刻（`token_expire_time` / `refresh_token_expire_time`）。无需本地回调 server、无需重定向 URL 配置。
 
-每次命令的 token 选择优先级：
+**身份策略**：所有命令默认以用户身份（`user_access_token`）调用，应用身份（`tenant_access_token`）仅在显式加全局 flag `--as bot` 时使用，不再静默降级。默认（`--as user`）下每次命令的 token 处理：
 
 1. `user_access_token` 有效（未过期，含 5 分钟缓冲）→ 直接使用
 2. access 过期但 `refresh_token` 未过期 → 自动刷新（跨进程加锁防轮换式 refresh_token 被并发打翻，走 v2 `oauth/token` 端点），保存新 token
-3. `refresh_token` 也已过期（默认约 7 天）或刷新被判定确定性失效（如 `invalid_grant`）→ 清除本地 token 并提示重新 `larkdown auth login`，本次回退 `tenant_access_token`
-4. 无 user token → 直接用 `tenant_access_token`（仅应用身份）
+3. `refresh_token` 也已过期（默认约 7 天）或刷新被判定确定性失效（如 `invalid_grant`）→ 清除本地 token，命令报错提示重新 `larkdown auth login`
+4. 从未登录 → 命令报错提示 `larkdown auth login`（批量自动化可加 `--as bot` 显式使用应用身份）
 
-`larkdown auth status` 只读展示当前身份、access 与刷新令牌的有效期（不触发刷新）。使用用户身份能访问用户有权限的所有文档；应用身份则需文档显式授权给应用。
+`larkdown auth status` 只读展示当前身份、access 与刷新令牌的有效期（不触发刷新）。使用用户身份能访问用户有权限的所有文档（数据范围随用户本人可见范围，评论真实姓名等通讯录数据无需应用侧审批）；应用身份（`--as bot`）则需文档显式授权给应用、通讯录范围由应用配置决定。
 
 ### 无头 / 自动化登录（agent / CI / claude code）
 

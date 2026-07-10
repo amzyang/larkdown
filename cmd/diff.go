@@ -122,7 +122,10 @@ func handleDiffCommand(filePath string) error {
 	}
 
 	ctx := context.Background()
-	client := createClientFromConfig(ctx, config, configPath)
+	client, err := createClientFromConfig(ctx, config, configPath)
+	if err != nil {
+		return err
+	}
 
 	// 规范化本地 markdown：通过 md→DocxBlocks→md 管线消除格式差异
 	normalizedLocal, err := core.NormalizeMarkdown(localBody, filepath.Dir(filePath))

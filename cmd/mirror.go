@@ -125,7 +125,10 @@ func handleMirrorCommand(urlArg string) error {
 	}
 
 	ctx := context.Background()
-	client := createClientFromConfig(ctx, config, configPath)
+	client, err := createClientFromConfig(ctx, config, configPath)
+	if err != nil {
+		return err
+	}
 
 	parsed, err := utils.ParseFeishuUrl(url)
 	if err != nil {
