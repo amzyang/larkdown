@@ -90,6 +90,7 @@ larkdown auth logout         # 撤销并清除本地 user_access_token
 | `login`    | -    | `auth login` 的隐藏兼容别名              |
 | `open`     | -    | 在浏览器中打开 Markdown 对应的飞书源文档 |
 | `diff`     | -    | 对比本地 Markdown 与飞书线上版本的差异   |
+| `search`   | -    | 搜索当前用户可见的云文档/Wiki            |
 | `ocr`      | -    | 识别图片中的文字（飞书 AI OCR）          |
 
 全局选项：`--debug` 启用 HTTP 日志
@@ -212,6 +213,32 @@ larkdown diff -i docs/文档标题.md  # 反转方向（remote → local）
 larkdown open docs/文档标题.md
 larkdown open a.md b.md c.md
 ```
+
+#### search 命令
+
+按关键词搜索当前用户可见的云文档与 Wiki（一次同时搜两边），输出标题、类型、所有者、更新时间和 URL——找到 URL 后可直接接力 `download` / `mirror` / `upload --source`。需要用户身份（`larkdown auth login`）。
+
+```bash
+larkdown search "产品规范"                          # 文本输出（标题 + URL）
+larkdown search "产品规范" --json | jq .            # 机读 JSON（results/total/has_more/page_token）
+larkdown search "规范" --doc-types docx,wiki        # 按类型过滤
+larkdown search "规范" --space <space_id>           # 限定 Wiki 空间
+larkdown search "规范" --only-title --sort edit_time
+larkdown search "规范" --page-token '<上页返回的 token>'  # 翻页
+```
+
+| 选项           | 默认值 | 说明                                                                 |
+| -------------- | ------ | -------------------------------------------------------------------- |
+| `--doc-types`  | -      | 文档类型过滤，逗号分隔（doc/sheet/bitable/mindnote/file/wiki/docx/folder/catalog/slides/shortcut） |
+| `--space`      | -      | 限定 Wiki 空间 ID（逗号分隔，与 `--folder` 互斥）                     |
+| `--folder`     | -      | 限定云文档文件夹 token（逗号分隔，与 `--space` 互斥）                 |
+| `--only-title` | false  | 仅匹配标题                                                            |
+| `--sort`       | -      | 排序：default / edit_time / edit_time_asc / open_time / create_time  |
+| `--page-size`  | 20     | 每页条数（1–20）                                                      |
+| `--page-token` | -      | 上一页返回的分页标记                                                  |
+| `--json`       | false  | 输出机读 JSON                                                         |
+
+> 该命令依赖 OAuth scope `search:docs:read`（仅用户身份通道）。此 scope 为后加入：老 token 不含该权限，首次使用请重新执行 `larkdown auth login`。
 
 #### ocr 命令
 

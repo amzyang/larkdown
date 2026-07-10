@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/amzyang/larkdown/core"
+	"github.com/chyroc/lark"
 )
 
 func getIdAndSecretFromEnv(t *testing.T) (string, string) {
@@ -158,4 +159,27 @@ func TestGetWikiNodeList(t *testing.T) {
 	if len(nodes) == 0 {
 		t.Errorf("Error: no nodes found")
 	}
+}
+
+func TestSearchDocWiki(t *testing.T) {
+	appID, appSecret, userToken := getUserTokenFromConfig(t)
+	c := core.NewClientWithUserToken(appID, appSecret, userToken, nil)
+	pageSize := int64(5)
+	resp, err := c.SearchDocWiki(context.Background(), &lark.SearchDocWikiReq{
+		Query:      "文档",
+		PageSize:   &pageSize,
+		DocFilter:  &lark.SearchDocWikiReqDocFilter{},
+		WikiFilter: &lark.SearchDocWikiReqWikiFilter{},
+	})
+	if err != nil {
+		// 老 token 不含 search:docs:read scope，不算失败
+		if strings.Contains(err.Error(), "search:docs:read") {
+			t.Skip("user token lacks search:docs:read scope, re-run 'larkdown auth login':", err)
+		}
+		t.Fatal(err)
+	}
+	if resp == nil {
+		t.Fatal("nil response")
+	}
+	t.Logf("total=%d has_more=%v results=%d", resp.Total, resp.HasMore, len(resp.ResUnits))
 }

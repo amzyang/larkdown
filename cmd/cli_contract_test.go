@@ -72,8 +72,18 @@ func TestCommandTreeContract(t *testing.T) {
 			"app-id": {},
 			"new":    {Def: "false"},
 		}},
-		"diff":                  {Flags: map[string]flagSpec{"invert": {Short: "i", Def: "false"}}},
-		"open":                  {},
+		"diff": {Flags: map[string]flagSpec{"invert": {Short: "i", Def: "false"}}},
+		"open": {},
+		"search": {Flags: map[string]flagSpec{
+			"doc-types":  {},
+			"space":      {},
+			"folder":     {},
+			"only-title": {Def: "false"},
+			"sort":       {},
+			"page-size":  {Def: "20"},
+			"page-token": {},
+			"json":       {Def: "false"},
+		}},
 		"ocr":                   {},
 		"skills":                {},
 		"completion":            {},
@@ -132,6 +142,12 @@ func TestValidationExitErrors(t *testing.T) {
 		{[]string{"publish"}, "Please specify the HTML file or directory to publish"},
 		{[]string{"diff"}, "Please specify the markdown file"},
 		{[]string{"open"}, "Please specify at least one markdown file"},
+		{[]string{"search"}, "Please specify the search query"},
+		{[]string{"search", strings.Repeat("字", 51)}, "query must be at most 50 characters"},
+		{[]string{"search", "--folder", "f", "--space", "s", "q"}, "--folder cannot be used with --space"},
+		{[]string{"search", "--page-size", "21", "q"}, "--page-size must be between 1 and 20"},
+		{[]string{"search", "--doc-types", "bogus", "q"}, "--doc-types contains unknown value"},
+		{[]string{"search", "--sort", "bogus", "q"}, "--sort must be one of"},
 	}
 	for _, tc := range cases {
 		root := newRootCommand()

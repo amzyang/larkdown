@@ -267,6 +267,30 @@ func newOpenCommand() *cobra.Command {
 	}
 }
 
+func newSearchCommand() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:               "search <query>",
+		Short:             "Search docs and wiki visible to the current user (requires user_access_token)",
+		ValidArgsFunction: noFileCompletion,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := validateSearchArgs(args, searchOpts); err != nil {
+				return err
+			}
+			return handleSearchCommand(cmd.Context(), args[0])
+		},
+	}
+	fl := cmd.Flags()
+	fl.StringVar(&searchOpts.docTypes, "doc-types", "", "Filter by document types, comma-separated (doc, sheet, bitable, mindnote, file, wiki, docx, folder, catalog, slides, shortcut)")
+	fl.StringVar(&searchOpts.space, "space", "", "Restrict search to wiki space IDs, comma-separated (mutually exclusive with --folder)")
+	fl.StringVar(&searchOpts.folder, "folder", "", "Restrict search to drive folder tokens, comma-separated (mutually exclusive with --space)")
+	fl.BoolVar(&searchOpts.onlyTitle, "only-title", false, "Match document titles only")
+	fl.StringVar(&searchOpts.sort, "sort", "", "Sort order: default, edit_time, edit_time_asc, open_time, create_time")
+	fl.Int64Var(&searchOpts.pageSize, "page-size", 20, "Number of results per page (1-20)")
+	fl.StringVar(&searchOpts.pageToken, "page-token", "", "Page token returned by the previous page to fetch the next page")
+	fl.BoolVar(&searchOpts.asJSON, "json", false, "Emit machine-readable JSON (results, total, has_more, page_token)")
+	return cmd
+}
+
 func newOCRCommand() *cobra.Command {
 	return &cobra.Command{
 		Use:   "ocr [image-file]",
@@ -331,6 +355,7 @@ func newRootCommand() *cobra.Command {
 		newPublishCommand(),
 		newDiffCommand(),
 		newOpenCommand(),
+		newSearchCommand(),
 		newOCRCommand(),
 		newSkillsCommand(),
 		newCompletionCommand(),

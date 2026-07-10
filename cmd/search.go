@@ -1,0 +1,242 @@
+package main
+
+import (
+	"context"
+	"fmt"
+	"os"
+	"regexp"
+	"strings"
+	"time"
+	"unicode/utf8"
+
+	"github.com/amzyang/larkdown/core"
+	"github.com/chyroc/lark"
+)
+
+type searchOptions struct {
+	docTypes  string
+	folder    string
+	space     string
+	sort      string
+	pageToken string
+	onlyTitle bool
+	asJSON    bool
+	pageSize  int64
+}
+
+var searchOpts = searchOptions{}
+
+// searchDocTypes 是 --doc-types 允许的取值（API 侧为对应大写）。
+var searchDocTypes = []string{"doc", "sheet", "bitable", "mindnote", "file", "wiki", "docx", "folder", "catalog", "slides", "shortcut"}
+
+// searchSortTypes 是 --sort 允许的取值；服务端枚举为对应大写，唯 default 对应 DEFAULT_TYPE。
+var searchSortTypes = []string{"default", "edit_time", "edit_time_asc", "open_time", "create_time"}
+
+func handleSearchCommand(ctx context.Context, query string) error {
+	configPath, err := core.GetConfigFilePath()
+	if err != nil {
+		return err
+	}
+	config, err := core.ReadConfigFromFile(configPath)
+	if err != nil {
+		return err
+	}
+	client := createClientFromConfig(ctx, config, configPath)
+	if !client.HasUserToken() {
+		return exitWithMessage("search 需要用户身份（user_access_token），请先执行 larkdown auth login", 1)
+	}
+
+	resp, err := client.SearchDocWiki(ctx, buildSearchRequest(query, searchOpts))
+	if err != nil {
+		return fmt.Errorf("搜索失败: %w", err)
+	}
+
+	page := newSearchResultPage(resp)
+	if searchOpts.asJSON {
+		printJSON(os.Stdout, page)
+		return nil
+	}
+	fmt.Print(formatSearchResultsText(page))
+	return nil
+}
+
+// validateSearchArgs 校验位置参数与 flag 组合；全部在触网前完成。
+func validateSearchArgs(args []string, opts searchOptions) error {
+	if len(args) == 0 {
+		return exitWithMessage("Please specify the search query", 1)
+	}
+	if utf8.RuneCountInString(args[0]) > 50 {
+		return exitWithMessage("query must be at most 50 characters", 1)
+	}
+	if opts.folder != "" && opts.space != "" {
+		return exitWithMessage("--folder cannot be used with --space", 1)
+	}
+	if opts.pageSize < 1 || opts.pageSize > 20 {
+		return exitWithMessage("--page-size must be between 1 and 20", 1)
+	}
+	for _, dt := range splitCSV(opts.docTypes) {
+		if !containsFold(searchDocTypes, dt) {
+			return exitWithMessage(fmt.Sprintf("--doc-types contains unknown value %q (allowed: %s)",
+				dt, strings.Join(searchDocTypes, ", ")), 1)
+		}
+	}
+	if opts.sort != "" && !containsFold(searchSortTypes, opts.sort) {
+		return exitWithMessage(fmt.Sprintf("--sort must be one of: %s", strings.Join(searchSortTypes, ", ")), 1)
+	}
+	return nil
+}
+
+func splitCSV(s string) []string {
+	var out []string
+	for _, item := range strings.Split(s, ",") {
+		if item = strings.TrimSpace(item); item != "" {
+			out = append(out, item)
+		}
+	}
+	return out
+}
+
+func containsFold(allowed []string, s string) bool {
+	for _, a := range allowed {
+		if strings.EqualFold(a, s) {
+			return true
+		}
+	}
+	return false
+}
+
+// buildSearchRequest 组装请求（假设已通过 validateSearchArgs）。
+// 默认 doc_filter 与 wiki_filter 都发非 nil 空结构（序列化为 {}），一次同时搜云文档和 Wiki；
+// --folder 只发 doc_filter，--space 只发 wiki_filter（服务端不支持二者同时限定）。
+func buildSearchRequest(query string, opts searchOptions) *lark.SearchDocWikiReq {
+	var docTypes []string
+	for _, dt := range splitCSV(opts.docTypes) {
+		docTypes = append(docTypes, strings.ToUpper(dt))
+	}
+	var sortType *string
+	if opts.sort != "" {
+		st := strings.ToUpper(opts.sort)
+		if st == "DEFAULT" {
+			st = "DEFAULT_TYPE"
+		}
+		sortType = &st
+	}
+	var onlyTitle *bool
+	if opts.onlyTitle {
+		onlyTitle = &opts.onlyTitle
+	}
+
+	req := &lark.SearchDocWikiReq{
+		Query:    query,
+		PageSize: &opts.pageSize,
+	}
+	if opts.pageToken != "" {
+		req.PageToken = &opts.pageToken
+	}
+	if opts.space == "" {
+		req.DocFilter = &lark.SearchDocWikiReqDocFilter{
+			DocTypes:     docTypes,
+			FolderTokens: splitCSV(opts.folder),
+			OnlyTitle:    onlyTitle,
+			SortType:     sortType,
+		}
+	}
+	if opts.folder == "" {
+		req.WikiFilter = &lark.SearchDocWikiReqWikiFilter{
+			DocTypes:  docTypes,
+			SpaceIDs:  splitCSV(opts.space),
+			OnlyTitle: onlyTitle,
+			SortType:  sortType,
+		}
+	}
+	return req
+}
+
+var searchHighlightRe = regexp.MustCompile(`</?hb?>|</?b>`)
+
+// stripSearchHighlight 剥离搜索结果中的 <h>/<hb>/<b> 高亮标签。
+func stripSearchHighlight(s string) string {
+	return searchHighlightRe.ReplaceAllString(s, "")
+}
+
+type searchResultItem struct {
+	Title      string `json:"title"`
+	Summary    string `json:"summary,omitempty"`
+	EntityType string `json:"entity_type"`
+	DocType    string `json:"doc_type,omitempty"`
+	Token      string `json:"token"`
+	URL        string `json:"url"`
+	OwnerName  string `json:"owner_name,omitempty"`
+	UpdateTime string `json:"update_time,omitempty"` // RFC3339（本地时区）
+}
+
+type searchResultPage struct {
+	Total     int64              `json:"total"`
+	HasMore   bool               `json:"has_more"`
+	PageToken string             `json:"page_token,omitempty"` // 仅 has_more 时有值
+	Results   []searchResultItem `json:"results"`
+}
+
+// newSearchResultPage 把 API 响应转成输出模型：剥高亮标签、doc_type 空时回退 entity_type、
+// 时间戳转 RFC3339。
+func newSearchResultPage(resp *lark.SearchDocWikiResp) searchResultPage {
+	page := searchResultPage{
+		Total:     resp.Total,
+		HasMore:   resp.HasMore,
+		PageToken: resp.PageToken,
+		Results:   []searchResultItem{},
+	}
+	for _, unit := range resp.ResUnits {
+		if unit == nil {
+			continue
+		}
+		item := searchResultItem{
+			Title:      stripSearchHighlight(unit.TitleHighlighted),
+			Summary:    stripSearchHighlight(unit.SummaryHighlighted),
+			EntityType: unit.EntityType,
+		}
+		if meta := unit.ResultMeta; meta != nil {
+			item.DocType = strings.ToLower(meta.DocTypes)
+			item.Token = meta.Token
+			item.URL = meta.URL
+			item.OwnerName = meta.OwnerName
+			if meta.UpdateTime > 0 {
+				item.UpdateTime = time.Unix(meta.UpdateTime, 0).Format(time.RFC3339)
+			}
+		}
+		if item.DocType == "" {
+			item.DocType = strings.ToLower(unit.EntityType)
+		}
+		page.Results = append(page.Results, item)
+	}
+	return page
+}
+
+// formatSearchResultsText 人类可读文本渲染。每条结果两行：标题行 + URL 行（URL 缺失时回退 token）。
+func formatSearchResultsText(page searchResultPage) string {
+	if len(page.Results) == 0 {
+		return "未找到匹配结果。\n"
+	}
+	var b strings.Builder
+	for _, item := range page.Results {
+		fmt.Fprintf(&b, "[%s] %s", item.DocType, item.Title)
+		if item.OwnerName != "" {
+			fmt.Fprintf(&b, " — %s", item.OwnerName)
+		}
+		if len(item.UpdateTime) >= 16 {
+			fmt.Fprintf(&b, " · %s", strings.Replace(item.UpdateTime[:16], "T", " ", 1))
+		}
+		b.WriteString("\n")
+		switch {
+		case item.URL != "":
+			fmt.Fprintf(&b, "    %s\n", item.URL)
+		case item.Token != "":
+			fmt.Fprintf(&b, "    token: %s\n", item.Token)
+		}
+	}
+	fmt.Fprintf(&b, "\n共 %d 条（匹配总数 %d）\n", len(page.Results), page.Total)
+	if page.HasMore && page.PageToken != "" {
+		fmt.Fprintf(&b, "还有更多结果，下一页请附加: --page-token '%s'\n", page.PageToken)
+	}
+	return b.String()
+}

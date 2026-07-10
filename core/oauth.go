@@ -28,7 +28,7 @@ const (
 
 // DeviceFlowScope 是设备码申请请求的 scope（登录所需的全部读写权限）。
 // RequestDeviceCode 会在其上自动追加 offline_access 以换取 refresh_token。
-const DeviceFlowScope = "docx:document:readonly docs:document.content:read wiki:wiki:readonly drive:file:readonly drive:drive:readonly bitable:app:readonly drive:export:readonly docs:document.media:download board:whiteboard:node:read docs:document.comment:read contact:contact.base:readonly wiki:node:create docx:document.block:convert docx:document:write_only docs:document.media:upload board:whiteboard:node:create spark:app:write"
+const DeviceFlowScope = "docx:document:readonly docs:document.content:read wiki:wiki:readonly drive:file:readonly drive:drive:readonly bitable:app:readonly drive:export:readonly docs:document.media:download board:whiteboard:node:read docs:document.comment:read contact:contact.base:readonly wiki:node:create docx:document.block:convert docx:document:write_only docs:document.media:upload board:whiteboard:node:create spark:app:write search:docs:read"
 
 // OAuthManager 是一个纯裸-HTTP 的飞书 OAuth 客户端（设备码流程）。
 // 不依赖 lark SDK：设备码申请/轮询/刷新/撤销全部走 net/http + form-encoded。

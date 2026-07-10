@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -1386,4 +1387,33 @@ func (c *Client) CreateWhiteboardPlantUML(ctx context.Context, boardToken, plant
 // RecognizeBasicImage 调用飞书 AI OCR 识别图片中的文字
 func (c *Client) RecognizeBasicImage(ctx context.Context, req *lark.RecognizeBasicImageReq) (*lark.RecognizeBasicImageResp, *lark.Response, error) {
 	return c.larkClient.AI.RecognizeBasicImage(ctx, req, c.methodOptions()...)
+}
+
+// SearchDocWiki 搜索当前用户可见的云文档与 Wiki（search/v2/doc_wiki/search）。
+// 该 API 仅支持 user_access_token，无应用凭证（tenant）通道。
+func (c *Client) SearchDocWiki(ctx context.Context, req *lark.SearchDocWikiReq) (*lark.SearchDocWikiResp, error) {
+	resp, _, err := c.larkClient.Search.SearchDocWiki(ctx, req, c.methodOptions()...)
+	if err != nil {
+		return nil, enrichSearchScopeError(err)
+	}
+	return resp, nil
+}
+
+// enrichSearchScopeError 把「token 缺 search:docs:read 权限」的 API 错误包装为带重新登录
+// 指引的错误，其余错误透传。search:docs:read 是后加入 DeviceFlowScope 的 scope，而 refresh
+// 不会扩权，改动前签发的老 token 打该 API 必然报权限错误，只能重新 auth login。
+func enrichSearchScopeError(err error) error {
+	var le *lark.Error
+	if !errors.As(err, &le) {
+		return err
+	}
+	msg := strings.ToLower(le.Msg)
+	scopeIssue := le.Code == 99991679 || // Access token does not have the required scope
+		(le.ErrorDetail != nil && len(le.ErrorDetail.PermissionViolations) > 0) ||
+		strings.Contains(msg, "scope") || strings.Contains(msg, "permission")
+	if !scopeIssue {
+		return err
+	}
+	return fmt.Errorf("当前 user_access_token 缺少 search:docs:read 权限（新增 scope，老 token 不含）。"+
+		"请确认开发者后台已开通该权限，然后重新执行 larkdown auth login: %w", err)
 }

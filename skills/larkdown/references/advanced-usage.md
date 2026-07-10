@@ -92,6 +92,7 @@ larkdown auth login --device-code <device_code> --json   # 用户授权后换取
 | `board:whiteboard:node:create` | 创建白板节点               |
 | `optical_char_recognition:image` | OCR 识别图片文字（`ocr` 命令用）|
 | `spark:app:write` / `spark:app:publish` | 创建/发布妙搭应用（`publish` 命令用，详见 permissions.json `user` 段） |
+| `search:docs:read`             | 搜索云文档/Wiki（`search` 命令用，仅用户身份；后加入的 scope，老 token 需重新 `auth login`） |
 
 ## 增量更新详解
 

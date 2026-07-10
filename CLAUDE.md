@@ -86,7 +86,8 @@ just clean          # 删除构建产物
 
 ```
 cmd/           # CLI 入口 (spf13/cobra)
-  main.go      # 命令注册（config, download, mirror, auth, upload, publish, diff, open, ocr, skills, completion）
+  main.go      # 命令注册（config, download, mirror, auth, upload, publish, diff, open, search, ocr, skills, completion）
+  search.go    # search 子命令：关键词搜索可见云文档/Wiki（doc_wiki/search，仅 user token）
   download.go  # download/dl 子命令：单文档、批量文件夹、Wiki 递归下载
   mirror.go    # mirror 子命令：单向只下载同步为本地镜像目录（索引 + CLAUDE.md + 陈旧清理）
   follow.go    # --follow 执行器：主下载完成后 BFS 下载被引用文档到 _refs/
@@ -218,6 +219,7 @@ larkdown auth logout
 - `board:whiteboard:node:read` - 读取白板节点（下载白板图片需要）
 - `drive:drive.comment:read` - 读取文档评论（--comments 选项需要）
 - `contact:contact.base:readonly` - 获取用户基本信息（评论显示真实姓名需要）
+- `search:docs:read` - 搜索云文档/Wiki（search 命令需要；仅 user_access_token 通道。该 scope 为后加入，refresh 不扩权，老 token 需重新 `larkdown auth login`）
 
 ### E2E 测试
 

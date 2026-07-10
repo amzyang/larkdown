@@ -72,6 +72,16 @@ larkdown ul doc.md --source "https://example.feishu.cn/wiki/xxx"
 larkdown ul doc.md --full
 ```
 
+### 查找文档（拿 URL 接力下载）
+
+```bash
+# 按关键词搜索可见的云文档 + Wiki，拿到 URL 后接力 dl / mirror / ul --source
+larkdown search "产品规范"
+
+# agent 机读：--json 输出 results（含 title/url/token/doc_type）+ total/has_more/page_token
+larkdown search "产品规范" --json
+```
+
 ## URL 类型自动检测
 
 larkdown 根据 URL 路径自动识别类型，不需要额外 flag：
@@ -171,6 +181,30 @@ larkdown diff docs/文档标题.md
 larkdown diff -i docs/文档标题.md  # 反转方向（remote → local）
 ```
 
+### search
+
+按关键词搜索当前用户可见的云文档与 Wiki（一次同时搜两边），输出标题、类型、所有者、更新时间和 URL。**需要用户身份**（`larkdown auth login`），应用凭证（tenant）无法调用。
+
+| 参数           | 说明                                                                                    | 默认值 |
+| -------------- | --------------------------------------------------------------------------------------- | ------ |
+| `<query>`      | 搜索关键词（必需，≤50 字符）                                                            | -      |
+| `--doc-types`  | 类型过滤，逗号分隔：doc/sheet/bitable/mindnote/file/wiki/docx/folder/catalog/slides/shortcut | -      |
+| `--space`      | 限定 Wiki 空间 ID（逗号分隔，与 `--folder` 互斥）                                        | -      |
+| `--folder`     | 限定云文档文件夹 token（逗号分隔，与 `--space` 互斥）                                    | -      |
+| `--only-title` | 仅匹配标题                                                                              | false  |
+| `--sort`       | 排序：default / edit_time / edit_time_asc / open_time / create_time                     | -      |
+| `--page-size`  | 每页条数（1–20）                                                                        | 20     |
+| `--page-token` | 上一页返回的分页标记（翻页用）                                                          | -      |
+| `--json`       | 输出机读 JSON：`{total, has_more, page_token, results:[{title,url,token,doc_type,...}]}` | false  |
+
+```bash
+larkdown search "产品规范"                       # 文本输出：[类型] 标题 — 所有者 · 更新时间 + URL
+larkdown search "产品规范" --json                # agent 机读（page_token 含特殊字符，翻页时注意引号包裹）
+larkdown search "规范" --space <space_id> --only-title --sort edit_time
+```
+
+依赖 OAuth scope `search:docs:read`；该 scope 为后加入且 refresh 不扩权，老 token 首次使用会报权限错误，重新 `larkdown auth login` 即可。
+
 ### ocr
 
 使用飞书 AI OCR 识别图片中的文字，按区域分段输出。无参数时默认从 macOS 剪贴板读取图片（适合截图后直接 OCR）。
@@ -224,6 +258,7 @@ larkdown config --appId xxx --appSecret xxx  # 设置凭证
 ## 注意事项
 
 - 下载支持 Docx、Wiki、电子表格（Sheet）、多维表格（Bitable）；不支持 Slides（幻灯片）
+- `search` 仅支持用户身份；scope `search:docs:read` 为后加入，老 token 需重新 `larkdown auth login` 才能使用
 - 登录走 OAuth 2.0 设备码流程；access_token 过期自动刷新（v2 端点 + 跨进程锁），refresh_token 默认约 7 天，过期后需重新 `larkdown auth login`，刷新失败回退应用身份（tenant_access_token）
 - 调试时可加 `--debug` 全局 flag 查看 HTTP 请求日志，详见 [高级用法](references/advanced-usage.md#调试)
 
