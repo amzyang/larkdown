@@ -6,8 +6,10 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/amzyang/larkdown/core"
+	"github.com/getsentry/sentry-go"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 )
@@ -24,6 +26,7 @@ const (
 var globalOpts = struct {
 	debug      bool
 	as         string
+	sentryDSN  string
 	clientOpts *core.ClientOptions
 }{}
 
@@ -78,15 +81,15 @@ func createClientFromConfig(ctx context.Context, config *core.Config, configPath
 				globalOpts.clientOpts,
 			), nil
 		case core.RefreshOutcomeTokenInvalidCleared:
-			return nil, fmt.Errorf("user_access_token 已失效（%v）。请重新执行 larkdown auth login，或加 --as bot 使用应用凭证 (tenant_access_token)", err)
+			return nil, exitWithMessage(fmt.Sprintf("user_access_token 已失效（%v）。请重新执行 larkdown auth login，或加 --as bot 使用应用凭证 (tenant_access_token)", err), 1)
 		default: // RefreshOutcomeTransientFailure
-			return nil, fmt.Errorf("刷新 user_access_token 失败（网络波动？%v）。token 已保留、稍后重试即可；或加 --as bot 使用应用凭证 (tenant_access_token)", err)
+			return nil, exitWithMessage(fmt.Sprintf("刷新 user_access_token 失败（网络波动？%v）。token 已保留、稍后重试即可；或加 --as bot 使用应用凭证 (tenant_access_token)", err), 1)
 		}
 	}
 	if config.Feishu.UserAccessToken != "" || config.Feishu.RefreshToken != "" {
-		return nil, errors.New("登录已过期（refresh_token 失效），请重新执行 larkdown auth login，或加 --as bot 使用应用凭证 (tenant_access_token)")
+		return nil, exitWithMessage("登录已过期（refresh_token 失效），请重新执行 larkdown auth login，或加 --as bot 使用应用凭证 (tenant_access_token)", 1)
 	}
-	return nil, errors.New("当前未登录：larkdown 默认使用用户身份（user_access_token）。请先执行 larkdown auth login；批量自动化场景可加 --as bot 使用应用凭证 (tenant_access_token)")
+	return nil, exitWithMessage("当前未登录：larkdown 默认使用用户身份（user_access_token）。请先执行 larkdown auth login；批量自动化场景可加 --as bot 使用应用凭证 (tenant_access_token)", 1)
 }
 
 // mdFileCompletion 生成「首个位置参数补全 .md 文件」的 ValidArgsFunction；
@@ -349,6 +352,13 @@ func newRootCommand() *cobra.Command {
 		CompletionOptions: cobra.CompletionOptions{DisableDefaultCmd: true},
 		// 为所有子命令构造客户端选项，并校验全局身份取值
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+			// shell 补全路径（__complete）必须零副作用、低延迟，跳过遥测初始化
+			if cmd.Name() != cobra.ShellCompRequestCmd && cmd.Name() != cobra.ShellCompNoDescRequestCmd {
+				envValue, envSet := os.LookupEnv("SENTRY_DSN")
+				dsn := resolveSentryDSN(globalOpts.sentryDSN, cmd.Flags().Changed("sentry-dsn"),
+					os.Getenv("DO_NOT_TRACK"), envValue, envSet, sentryDSN)
+				initSentry(dsn, strings.TrimSpace(version), globalOpts.debug)
+			}
 			globalOpts.clientOpts = &core.ClientOptions{Debug: globalOpts.debug}
 			if globalOpts.as != identityUser && globalOpts.as != identityBot {
 				return exitWithMessage(fmt.Sprintf("--as must be 'user' or 'bot' (got %q)", globalOpts.as), 1)
@@ -359,6 +369,7 @@ func newRootCommand() *cobra.Command {
 	}
 	root.PersistentFlags().BoolVar(&globalOpts.debug, "debug", false, "Enable HTTP request/response logging to stderr (JSONL format)")
 	root.PersistentFlags().StringVar(&globalOpts.as, "as", identityUser, "Identity for Feishu API calls: user (user_access_token, default) or bot (tenant_access_token app credentials)")
+	root.PersistentFlags().StringVar(&globalOpts.sentryDSN, "sentry-dsn", "", "Sentry DSN for crash/error reporting (overrides SENTRY_DSN env and the build-time default; pass an empty value to disable)")
 	_ = root.RegisterFlagCompletionFunc("as", cobra.FixedCompletions(
 		[]cobra.Completion{identityUser, identityBot}, cobra.ShellCompDirectiveNoFileComp))
 	// flag 解析错误：单行错误 + --help 提示（不 dump 整页 usage），退出码 1
@@ -387,6 +398,7 @@ func newRootCommand() *cobra.Command {
 }
 
 func main() {
+	defer sentryRecoverRepanic()
 	err := newRootCommand().ExecuteContext(context.Background())
 	if err == nil {
 		return
@@ -398,7 +410,13 @@ func main() {
 		}
 		os.Exit(ee.code)
 	}
-	// 未知子命令与 handler 运行时错误：干净单行到 stderr（不带 log 时间戳），退出码 1
+	// 未知子命令与 handler 运行时错误：干净单行到 stderr（不带 log 时间戳），退出码 1。
+	// 先打印再上报，Flush 阻塞不影响用户第一时间看到错误；exitError（用户输入类）与
+	// 用户主动取消/超时不上报 Sentry。
 	fmt.Fprintln(os.Stderr, "Error:", err)
+	if !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+		sentry.CaptureException(err)
+		sentry.Flush(2 * time.Second)
+	}
 	os.Exit(1)
 }

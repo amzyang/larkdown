@@ -121,14 +121,17 @@ func TestCommandTreeContract(t *testing.T) {
 	assert.Equal(t, want, got)
 }
 
-// TestRootContract 锁 root 级契约：--debug/--as 是 persistent flag（可置于子命令前）、
-// --as 默认 user（user_access_token 策略）、版本号注入生效。
+// TestRootContract 锁 root 级契约：--debug/--as/--sentry-dsn 是 persistent flag（可置于子命令前）、
+// --as 默认 user（user_access_token 策略）、--sentry-dsn 默认空（走 env/编译期 fallback）、版本号注入生效。
 func TestRootContract(t *testing.T) {
 	root := newRootCommand()
 	require.NotNil(t, root.PersistentFlags().Lookup("debug"))
 	asFlag := root.PersistentFlags().Lookup("as")
 	require.NotNil(t, asFlag)
 	assert.Equal(t, "user", asFlag.DefValue)
+	sentryFlag := root.PersistentFlags().Lookup("sentry-dsn")
+	require.NotNil(t, sentryFlag)
+	assert.Equal(t, "", sentryFlag.DefValue)
 	assert.NotEmpty(t, root.Version)
 }
 

@@ -314,6 +314,7 @@ func downloadDocuments(ctx context.Context, client *core.Client, url string, see
 				// concurrently download the document
 				wg.Add(1)
 				go func(_url string, _folderPath string) {
+					defer sentryRecoverRepanic()
 					meta, err := downloadDocument(ctx, client, _url, &opts)
 					if err != nil {
 						mu.Lock()
@@ -388,6 +389,7 @@ func downloadWikiNodeRecursive(ctx context.Context, client *core.Client,
 				wg.Add(1)
 				semaphore <- struct{}{}
 				go func(_url string, _folderPath string) {
+					defer sentryRecoverRepanic()
 					meta, err := downloadDocument(ctx, client, _url, &opts)
 					if err != nil {
 						log.Printf("警告: 文档下载失败，跳过: %v", err)
@@ -404,6 +406,7 @@ func downloadWikiNodeRecursive(ctx context.Context, client *core.Client,
 				wg.Add(1)
 				semaphore <- struct{}{}
 				go func(token, title, outDir string) {
+					defer sentryRecoverRepanic()
 					if err := downloadFile(ctx, client, token, title, outDir, "file"); err != nil {
 						log.Printf("警告: 文件下载失败，跳过: %v", err)
 						collectErr(err)
@@ -415,6 +418,7 @@ func downloadWikiNodeRecursive(ctx context.Context, client *core.Client,
 				wg.Add(1)
 				semaphore <- struct{}{}
 				go func(token, title, outDir, sourceURL string) {
+					defer sentryRecoverRepanic()
 					if err := downloadSheet(ctx, client, token, title, outDir, sourceURL); err != nil {
 						log.Printf("警告: 电子表格下载失败，跳过: %v", err)
 						collectErr(err)
