@@ -309,9 +309,20 @@ func (m *OAuthManager) RevokeToken(ctx context.Context, token, tokenTypeHint str
 	return nil
 }
 
+// postForm 发一个 form-encoded POST 并返回状态码与响应体（debugf 日志由薄壳负责）。
+func (m *OAuthManager) postForm(ctx context.Context, endpoint string, form url.Values, basicAuth string) (int, []byte, error) {
+	status, body, err := postForm(ctx, m.httpClient, endpoint, form, basicAuth)
+	if err != nil && status == 0 {
+		m.debugf("POST %s -> transport error: %v", endpoint, err)
+	} else {
+		m.debugf("POST %s -> HTTP %d", endpoint, status)
+	}
+	return status, body, err
+}
+
 // postForm 发一个 form-encoded POST 并返回状态码与响应体。
 // basicAuth 非空时设置 Authorization: Basic 头（仅设备码申请用）。
-func (m *OAuthManager) postForm(ctx context.Context, endpoint string, form url.Values, basicAuth string) (int, []byte, error) {
+func postForm(ctx context.Context, client *http.Client, endpoint string, form url.Values, basicAuth string) (int, []byte, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, strings.NewReader(form.Encode()))
 	if err != nil {
 		return 0, nil, err
@@ -321,15 +332,13 @@ func (m *OAuthManager) postForm(ctx context.Context, endpoint string, form url.V
 		req.Header.Set("Authorization", "Basic "+basicAuth)
 	}
 
-	resp, err := m.httpClient.Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
-		m.debugf("POST %s -> transport error: %v", endpoint, err)
 		return 0, nil, err
 	}
 	defer resp.Body.Close()
 
 	body, err := io.ReadAll(resp.Body)
-	m.debugf("POST %s -> HTTP %d", endpoint, resp.StatusCode)
 	if err != nil {
 		return resp.StatusCode, nil, err
 	}
