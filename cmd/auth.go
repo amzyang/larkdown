@@ -34,7 +34,7 @@ func runLogin(cmd *cobra.Command, args []string) error {
 	noWait, _ := cmd.Flags().GetBool("no-wait")
 	deviceCode, _ := cmd.Flags().GetString("device-code")
 	jsonOut, _ := cmd.Flags().GetBool("json")
-	return handleLoginCommand(loginOptions{
+	return handleLoginCommand(cmd.Context(), loginOptions{
 		noWait:     noWait,
 		deviceCode: deviceCode,
 		json:       jsonOut,

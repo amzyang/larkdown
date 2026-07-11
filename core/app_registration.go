@@ -148,11 +148,11 @@ func (r *AppRegistrar) PollAppRegistration(ctx context.Context, deviceCode strin
 	deadline := time.Now().Add(time.Duration(expiresIn) * time.Second)
 	currentInterval := interval
 	attempts := 0
-	maxAttempts := r.pollAttemptsOrDefault()
+	maxAttempts := pollAttemptsOrDefault(r.maxPollAttempts)
 
 	for time.Now().Before(deadline) && attempts < maxAttempts {
 		attempts++
-		if err := r.wait(ctx, time.Duration(currentInterval)*time.Second); err != nil {
+		if err := wait(ctx, r.sleep, time.Duration(currentInterval)*time.Second); err != nil {
 			return nil, &DeviceFlowError{Reason: "expired_token", Message: "轮询已取消"}
 		}
 
@@ -207,33 +207,17 @@ func (r *AppRegistrar) PollAppRegistration(ctx context.Context, deviceCode strin
 // postForm 发一个匿名 form-encoded POST（注册端点不需要 Authorization 头）。
 func (r *AppRegistrar) postForm(ctx context.Context, endpoint string, form url.Values) (int, []byte, error) {
 	status, body, err := postForm(ctx, r.httpClient, endpoint, form, "")
-	if r.debug {
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "[larkdown][app-registration] POST %s -> transport error: %v\n", endpoint, err)
-		} else {
-			fmt.Fprintf(os.Stderr, "[larkdown][app-registration] POST %s -> HTTP %d\n", endpoint, status)
-		}
+	if err != nil {
+		r.debugf("POST %s -> transport error: %v", endpoint, err)
+	} else {
+		r.debugf("POST %s -> HTTP %d", endpoint, status)
 	}
 	return status, body, err
 }
 
-// wait 等待 d，生产走 time.After（可被 ctx 取消打断），测试注入 r.sleep 消除真实等待。
-func (r *AppRegistrar) wait(ctx context.Context, d time.Duration) error {
-	if r.sleep != nil {
-		return r.sleep(ctx, d)
+// debugf 仅在 --debug 下对注册请求打一行 stderr 日志（只记 endpoint + 状态，不含 secret/token）。
+func (r *AppRegistrar) debugf(format string, args ...interface{}) {
+	if r.debug {
+		fmt.Fprintf(os.Stderr, "[larkdown][app-registration] "+format+"\n", args...)
 	}
-	select {
-	case <-time.After(d):
-		return nil
-	case <-ctx.Done():
-		return ctx.Err()
-	}
-}
-
-// pollAttemptsOrDefault 返回轮询次数上界（防御性兜底，正常由 deadline 先终止）。
-func (r *AppRegistrar) pollAttemptsOrDefault() int {
-	if r.maxPollAttempts > 0 {
-		return r.maxPollAttempts
-	}
-	return 600
 }

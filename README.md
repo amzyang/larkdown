@@ -31,8 +31,8 @@ larkdown config init
 
 `config init` 走匿名 OAuth 设备码流程自动创建一个飞书 PersonalAgent 个人应用：命令打印授权链接（并尽力自动打开浏览器），你登录飞书确认创建后，新应用的 APP_ID/APP_SECRET 自动写入配置，无需去开发者后台手动建应用、也无需手动开启设备码授权。
 
-- 已有凭证时需加 `--force` 覆盖（会同时清空旧应用的登录令牌，需重新 `larkdown auth login`）
-- agent/CI/无头环境可用两段式：`larkdown config init --no-wait --json` 拿到 `device_code`，授权后 `larkdown config init --device-code <code> --json` 换取凭证
+- 已有凭证时需加 `--force` 覆盖（会 best-effort 撤销并清空旧应用的登录令牌，需重新 `larkdown auth login`）
+- agent/CI/无头环境可用两段式：`larkdown config init --no-wait --json` 拿到 `device_code`，授权后 `larkdown config init --device-code <code> --json` 换取凭证；两段是独立进程，首段带了 `--force` 第二段同样需要
 - 仅支持飞书（feishu.cn）；Lark 海外租户请用方式二
 
 ### 方式二：手动创建企业自建应用

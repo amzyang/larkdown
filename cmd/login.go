@@ -44,7 +44,7 @@ func validateLoginOptions(opts loginOptions) error {
 //
 // 后两者组合成两段式登录：agent/CI 先 --no-wait 拿到 URL 展示给人，人授权后再 --device-code 换令牌，
 // 避免单次调用被长时间轮询阻塞。--json 让上述各步输出机读事件，便于程序解析。
-func handleLoginCommand(opts loginOptions) error {
+func handleLoginCommand(ctx context.Context, opts loginOptions) error {
 	if err := validateLoginOptions(opts); err != nil {
 		return err
 	}
@@ -61,7 +61,6 @@ func handleLoginCommand(opts loginOptions) error {
 		return fmt.Errorf("请先配置 appId 和 appSecret")
 	}
 
-	ctx := context.Background()
 	oauthMgr := core.NewOAuthManager(config.Feishu.AppId, config.Feishu.AppSecret, globalOpts.clientOpts)
 
 	// 恢复轮询模式：用已有 device_code 直接轮询换取令牌
@@ -120,7 +119,9 @@ func emitDeviceAuthorization(out io.Writer, dc *core.DeviceCodeResult, asJSON, s
 	fmt.Fprintf(out, "\n    %s\n\n", dc.VerificationURIComplete)
 	if dc.UserCode != "" {
 		fmt.Fprintf(out, "如页面提示输入验证码，请输入：%s\n", dc.UserCode)
-		fmt.Fprintf(out, "（或手动访问 %s 并输入上述验证码）\n", dc.VerificationURI)
+		if dc.VerificationURI != "" {
+			fmt.Fprintf(out, "（或手动访问 %s 并输入上述验证码）\n", dc.VerificationURI)
+		}
 	}
 	if showResumeHint {
 		fmt.Fprintf(out, "\n设备码 device_code：%s\n", dc.DeviceCode)

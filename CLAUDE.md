@@ -185,10 +185,11 @@ git merge upstream/master
 ```bash
 # 1. 配置应用凭证（设备码流程与 --as bot 都需要），两种方式任选：
 #    a) 一键自动创建 PersonalAgent 个人应用（匿名 device flow，浏览器授权后凭证自动落盘；
-#       已有凭证需 --force 覆盖，覆盖会同时清空旧应用的登录令牌）
+#       已有凭证需 --force 覆盖，覆盖会 best-effort 撤销并清空旧应用的登录令牌）
 larkdown config init
 #       两段式（agent/CI/无头友好）：先 --no-wait --json 拿 device_code，人授权后再 --device-code 换凭证
 #       larkdown config init --no-wait --json  然后  larkdown config init --device-code <code> --json
+#       两段是独立进程：首段带了 --force，第二段同样要带 --force
 #    b) 手动：在 open.feishu.cn 创建应用后填入凭证
 larkdown config --appId <id> --appSecret <secret>
 

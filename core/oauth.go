@@ -189,11 +189,11 @@ func (m *OAuthManager) PollDeviceToken(ctx context.Context, deviceCode string, i
 	deadline := time.Now().Add(time.Duration(expiresIn) * time.Second)
 	currentInterval := interval
 	attempts := 0
-	maxAttempts := m.pollAttemptsOrDefault()
+	maxAttempts := pollAttemptsOrDefault(m.maxPollAttempts)
 
 	for time.Now().Before(deadline) && attempts < maxAttempts {
 		attempts++
-		if err := m.wait(ctx, time.Duration(currentInterval)*time.Second); err != nil {
+		if err := wait(ctx, m.sleep, time.Duration(currentInterval)*time.Second); err != nil {
 			return nil, &DeviceFlowError{Reason: "expired_token", Message: "轮询已取消"}
 		}
 
@@ -312,7 +312,7 @@ func (m *OAuthManager) RevokeToken(ctx context.Context, token, tokenTypeHint str
 // postForm 发一个 form-encoded POST 并返回状态码与响应体（debugf 日志由薄壳负责）。
 func (m *OAuthManager) postForm(ctx context.Context, endpoint string, form url.Values, basicAuth string) (int, []byte, error) {
 	status, body, err := postForm(ctx, m.httpClient, endpoint, form, basicAuth)
-	if err != nil && status == 0 {
+	if err != nil {
 		m.debugf("POST %s -> transport error: %v", endpoint, err)
 	} else {
 		m.debugf("POST %s -> HTTP %d", endpoint, status)
@@ -345,10 +345,11 @@ func postForm(ctx context.Context, client *http.Client, endpoint string, form ur
 	return resp.StatusCode, body, nil
 }
 
-// wait 等待 d，生产走 time.After（可被 ctx 取消打断），测试注入 m.sleep 消除真实等待。
-func (m *OAuthManager) wait(ctx context.Context, d time.Duration) error {
-	if m.sleep != nil {
-		return m.sleep(ctx, d)
+// wait 等待 d，生产 sleep 为 nil 走 time.After（可被 ctx 取消打断），测试注入 sleep 消除真实等待。
+// OAuthManager 与 AppRegistrar 两个 device-flow 客户端共用。
+func wait(ctx context.Context, sleep func(context.Context, time.Duration) error, d time.Duration) error {
+	if sleep != nil {
+		return sleep(ctx, d)
 	}
 	select {
 	case <-time.After(d):
@@ -359,9 +360,9 @@ func (m *OAuthManager) wait(ctx context.Context, d time.Duration) error {
 }
 
 // pollAttemptsOrDefault 返回轮询次数上界（防御性兜底，正常由 deadline 先终止）。
-func (m *OAuthManager) pollAttemptsOrDefault() int {
-	if m.maxPollAttempts > 0 {
-		return m.maxPollAttempts
+func pollAttemptsOrDefault(maxPollAttempts int) int {
+	if maxPollAttempts > 0 {
+		return maxPollAttempts
 	}
 	return 600
 }

@@ -250,7 +250,7 @@ larkdown config --appId xxx --appSecret xxx  # 手动设置凭证
 larkdown config init                         # 一键自动创建 PersonalAgent 个人应用（浏览器授权后凭证自动落盘）
 ```
 
-`config init` 无需预置任何凭证；已有凭证时需 `--force` 覆盖（同时清空旧应用登录令牌）。agent 场景优先两段式：
+`config init` 无需预置任何凭证；已有凭证时需 `--force` 覆盖（best-effort 撤销并清空旧应用登录令牌）。agent 场景优先两段式（两段是独立进程：首段带了 `--force`，第二段 `--device-code` 同样要带 `--force`）：
 
 ```bash
 # 1) 发起注册，立即返回 device_code 与授权链接（单行 JSON 事件 app_registration）

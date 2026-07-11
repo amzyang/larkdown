@@ -13,7 +13,7 @@ import (
 
 // configInitOptions 汇总 config init 的 flag。
 type configInitOptions struct {
-	force      bool   // 已有 appId/appSecret 时允许覆盖（同时清空旧应用的登录令牌）
+	force      bool   // 已有 appId/appSecret 时允许覆盖（同时撤销并清空旧应用的登录令牌）
 	noWait     bool   // 仅发起注册并打印后立即返回、不轮询（供 agent/CI/无头环境两段式）
 	deviceCode string // 用前一次 --no-wait 得到的设备码恢复轮询
 	json       bool   // 输出机读 JSON（app_registration / app_registered 事件）
@@ -39,7 +39,7 @@ func newConfigInitCommand() *cobra.Command {
 		},
 	}
 	fl := cmd.Flags()
-	fl.Bool("force", false, "Overwrite existing app credentials (also clears saved login tokens)")
+	fl.Bool("force", false, "Overwrite existing app credentials (also revokes and clears saved login tokens)")
 	fl.Bool("no-wait", false, "Begin registration, print the device code and exit without polling (for agent/CI two-step flow)")
 	fl.String("device-code", "", "Resume polling with a device code from a prior --no-wait run")
 	fl.Bool("json", false, "Emit machine-readable JSON events (app_registration / app_registered)")
@@ -60,7 +60,7 @@ func checkExistingCredentials(config *core.Config, force bool) error {
 		return nil
 	}
 	if config.Feishu.AppId != "" || config.Feishu.AppSecret != "" {
-		return fmt.Errorf("配置已有应用凭证（appId %s）。如需替换为新应用请加 --force（将同时清除已保存的登录令牌，需重新 larkdown auth login）", maskSecret(config.Feishu.AppId))
+		return fmt.Errorf("配置已有应用凭证（appId %s）。如需替换为新应用请加 --force（将同时撤销并清除已保存的登录令牌，需重新 larkdown auth login）", maskSecret(config.Feishu.AppId))
 	}
 	return nil
 }
@@ -103,6 +103,7 @@ func handleConfigInitCommand(ctx context.Context, opts configInitOptions) error 
 		if err != nil {
 			return err
 		}
+		revokeOldTokensBestEffort(ctx, config)
 		return saveAppCredentials(os.Stdout, config, configPath, creds, opts.json)
 	}
 
@@ -129,7 +130,16 @@ func handleConfigInitCommand(ctx context.Context, opts configInitOptions) error 
 	if err != nil {
 		return err
 	}
+	revokeOldTokensBestEffort(ctx, config)
 	return saveAppCredentials(os.Stdout, config, configPath, creds, opts.json)
+}
+
+// revokeOldTokensBestEffort 覆盖旧凭证前撤销旧应用的远端 token（对齐 auth logout 的登出级语义）。
+// 仅 --force 覆盖已登录配置时才有 token 可撤（其余场景 no-op）；失败只警告不阻断——
+// 旧 refresh_token 需旧 client_secret 才能续命，凭证覆盖后自然失效。
+func revokeOldTokensBestEffort(ctx context.Context, config *core.Config) {
+	mgr := core.NewOAuthManager(config.Feishu.AppId, config.Feishu.AppSecret, globalOpts.clientOpts)
+	core.RevokeTokensBestEffort(ctx, config, mgr, os.Stderr)
 }
 
 // emitAppRegistration 输出应用注册授权入口；showResumeHint 为 true 时附上 --device-code

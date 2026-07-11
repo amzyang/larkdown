@@ -57,6 +57,19 @@ func TestEmitDeviceAuthorizationTextShowsResumeHint(t *testing.T) {
 	assert.NotContains(t, noHint.String(), "--device-code")
 }
 
+func TestEmitDeviceAuthorizationOmitsEmptyVerificationURI(t *testing.T) {
+	// verification_uri 缺省时不应打印空 URL 的手动兜底行（与 emitAppRegistration 同款守卫）
+	dc := &core.DeviceCodeResult{
+		DeviceCode:              "the-dc",
+		UserCode:                "UC",
+		VerificationURIComplete: "https://example.com/device?code=UC",
+	}
+	var buf bytes.Buffer
+	emitDeviceAuthorization(&buf, dc, false, false)
+	assert.Contains(t, buf.String(), "UC")
+	assert.NotContains(t, buf.String(), "或手动访问")
+}
+
 func TestSaveTokenWritesFieldsAndText(t *testing.T) {
 	configPath := filepath.Join(t.TempDir(), "config.json")
 	config := core.NewConfig("app-id", "app-secret")

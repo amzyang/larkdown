@@ -84,6 +84,42 @@ func TestLogoutRevokeFailureFallsBackAndStillClears(t *testing.T) {
 	assert.Empty(t, onDisk.Feishu.RefreshToken)
 }
 
+func TestRevokeTokensBestEffortRefreshFirst(t *testing.T) {
+	config := NewConfig("app-id", "app-secret")
+	config.Feishu.UserAccessToken = "u-tok"
+	config.Feishu.RefreshToken = "r-tok"
+	revoker := &fakeRevoker{}
+
+	RevokeTokensBestEffort(context.Background(), config, revoker, io.Discard)
+
+	// 优先撤销 refresh_token，成功即止；不动 config 字段（清空是调用方的事）
+	require.Len(t, revoker.calls, 1)
+	assert.Equal(t, revokeCall{token: "r-tok", hint: "refresh_token"}, revoker.calls[0])
+	assert.Equal(t, "u-tok", config.Feishu.UserAccessToken)
+	assert.Equal(t, "r-tok", config.Feishu.RefreshToken)
+}
+
+func TestRevokeTokensBestEffortFailureFallsBack(t *testing.T) {
+	config := NewConfig("app-id", "app-secret")
+	config.Feishu.UserAccessToken = "u-tok"
+	config.Feishu.RefreshToken = "r-tok"
+	revoker := &fakeRevoker{err: errors.New("revoke boom")}
+	var warn bytes.Buffer
+
+	RevokeTokensBestEffort(context.Background(), config, revoker, &warn)
+
+	require.Len(t, revoker.calls, 2)
+	assert.Equal(t, revokeCall{token: "r-tok", hint: "refresh_token"}, revoker.calls[0])
+	assert.Equal(t, revokeCall{token: "u-tok", hint: "access_token"}, revoker.calls[1])
+	assert.NotEmpty(t, warn.String(), "撤销失败应有 warn 输出")
+}
+
+func TestRevokeTokensBestEffortNoTokensNoCalls(t *testing.T) {
+	revoker := &fakeRevoker{}
+	RevokeTokensBestEffort(context.Background(), NewConfig("app-id", "app-secret"), revoker, io.Discard)
+	assert.Empty(t, revoker.calls)
+}
+
 func TestLogoutOnlyAccessTokenRevokesAccess(t *testing.T) {
 	configPath := filepath.Join(t.TempDir(), "config.json")
 	config := NewConfig("app-id", "app-secret")
