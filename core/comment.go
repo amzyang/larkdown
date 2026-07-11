@@ -46,7 +46,7 @@ type rawComment struct {
 // GetDocumentComments 获取文档所有评论（支持分页）。
 //
 // 两段式：先抓取累积原始 item 并收集全部 user id（作者 + person 元素），一次性解析
-// 姓名后再渲染。person 元素必须经 BatchGetUser 取名，故渲染不能早于姓名解析。
+// 姓名后再渲染。person 元素必须经 basic_batch 取名，故渲染不能早于姓名解析。
 func (c *Client) GetDocumentComments(ctx context.Context, fileToken string, fileType lark.FileType) (*CommentData, error) {
 	// Phase 1：分页抓取 + 累积原始 item（暂不渲染）
 	var raws []rawComment
@@ -145,48 +145,75 @@ func collectRawUserIDs(raws []rawComment) []string {
 	return userIDs
 }
 
-// ResolveUserNames 批量获取用户名。
-// userIDType 须与 userIDs 的 ID 类型一致（全局身份策略统一为 union_id，见 identity.go），
-// 否则 BatchGetUser 无法匹配到用户。返回的 map 同时以 open_id/user_id/union_id 为键，
-// 因此即便个别 person 元素恒返 open_id，只要该用户同时是评论作者即可命中。
+// basicUserFetcher 拉取一批（≤basicBatchSize）用户基本信息，idType 须与 batch 中 id 类型一致。
+// 生产实现为 Client.BasicBatchGetUsers，测试注入 fake。
+type basicUserFetcher func(ctx context.Context, batch []string, idType lark.IDType) ([]BasicUser, error)
+
+// basicBatchSize 是 contact/v3 basic_batch 单次请求的 user_ids 上限（接口硬限制）。
+const basicBatchSize = 10
+
+// ResolveUserNames 批量获取用户名，返回「输入 id → 姓名」映射。
+// 底层走 contact/v3 basic_batch：该接口不校验应用通讯录授权范围，user/bot 身份都能
+// 解析任意同租户用户；users/batch 会被应用可见范围静默过滤（code=0 但 items 缺人），
+// 曾导致 @mention 与评论作者全部回退为 union_id 原文。
+// userIDType 用于无法从前缀识别类型的 id（全局策略为 union_id，见 identity.go）。
 func (c *Client) ResolveUserNames(ctx context.Context, userIDs []string, userIDType *lark.IDType) map[string]string {
+	idType := lark.IDTypeUnionID
+	if userIDType != nil {
+		idType = *userIDType
+	}
+	return resolveUserNames(ctx, c.BasicBatchGetUsers, userIDs, idType)
+}
+
+// resolveUserNames 是 ResolveUserNames 的纯逻辑核心：按前缀分组 → 分批 → 合并。
+// basic_batch 返回的 user_id 类型与请求的 user_id_type 一致（不像 users/batch 一次
+// 返回三种 id），而评论 person 元素可能恒返 open_id，与全局 union_id 策略混批会查不到，
+// 故按 on_/ou_ 前缀分别以 union_id/open_id 成批。单批失败仅告警并继续（部分成功）。
+func resolveUserNames(ctx context.Context, fetch basicUserFetcher, userIDs []string, defaultIDType lark.IDType) map[string]string {
 	result := make(map[string]string)
 	if len(userIDs) == 0 {
 		return result
 	}
 
-	// 分批查询，每批最多 50 个
-	const batchSize = 50
-	for i := 0; i < len(userIDs); i += batchSize {
-		end := i + batchSize
-		if end > len(userIDs) {
-			end = len(userIDs)
-		}
-		batch := userIDs[i:end]
+	groups := make(map[lark.IDType][]string)
+	for _, id := range userIDs {
+		t := idTypeForUserID(id, defaultIDType)
+		groups[t] = append(groups[t], id)
+	}
 
-		resp, _, err := c.larkClient.Contact.BatchGetUser(ctx, &lark.BatchGetUserReq{
-			UserIDs:    batch,
-			UserIDType: userIDType,
-		}, c.methodOptions()...)
-		if err != nil {
-			log.Printf("警告: 批量获取用户信息失败: %v", err)
-			continue
-		}
-
-		for _, user := range resp.Items {
-			if user.OpenID != "" && user.Name != "" {
-				result[user.OpenID] = user.Name
+	for _, idType := range []lark.IDType{lark.IDTypeUnionID, lark.IDTypeOpenID, lark.IDTypeUserID} {
+		ids := groups[idType]
+		for i := 0; i < len(ids); i += basicBatchSize {
+			batch := ids[i:min(i+basicBatchSize, len(ids))]
+			users, err := fetch(ctx, batch, idType)
+			if err != nil {
+				log.Printf("警告: 批量获取用户信息失败: %v", err)
+				continue
 			}
-			if user.UserID != "" && user.Name != "" {
-				result[user.UserID] = user.Name
-			}
-			if user.UnionID != "" && user.Name != "" {
-				result[user.UnionID] = user.Name
+			for _, u := range users {
+				if u.UserID != "" && u.Name != "" {
+					result[u.UserID] = u.Name
+				}
 			}
 		}
 	}
 
+	if missing := len(userIDs) - len(result); missing > 0 {
+		log.Printf("警告: %d 个用户 ID 中 %d 个未解析到姓名（可能已离职或 ID 无效），将以原始 ID 显示", len(userIDs), missing)
+	}
 	return result
+}
+
+// idTypeForUserID 按前缀识别 id 类型：on_ 为 union_id、ou_ 为 open_id，其余用 defaultIDType。
+func idTypeForUserID(id string, defaultIDType lark.IDType) lark.IDType {
+	switch {
+	case strings.HasPrefix(id, "on_"):
+		return lark.IDTypeUnionID
+	case strings.HasPrefix(id, "ou_"):
+		return lark.IDTypeOpenID
+	default:
+		return defaultIDType
+	}
 }
 
 // fetchMoreReplies 获取评论的更多回复，返回原始 item（渲染推迟到 Phase 3）。

@@ -175,7 +175,7 @@ git merge upstream/master
 
 | 方式                | 说明                               | 使用场景                 |
 | ------------------- | ---------------------------------- | ------------------------ |
-| user_access_token   | 用户级认证，通过 OAuth 设备码流程登录获取 | **默认身份**；数据范围随用户本人可见范围（含评论真实姓名等通讯录数据，无需应用侧通讯录权限范围审批） |
+| user_access_token   | 用户级认证，通过 OAuth 设备码流程登录获取 | **默认身份**；文档数据范围随用户本人可见范围。用户真实姓名走 `contact/v3/users/basic_batch`（不校验通讯录授权范围，但应用需开通 `contact:user.basic_profile:readonly`）——注意 `users/batch` 会被应用通讯录可见范围**静默过滤**（code=0 但 items 缺人），勿再使用 |
 | tenant_access_token | 应用级认证，使用 AppID + AppSecret | 仅显式 `--as bot` 时使用，适合批量自动化；可见范围/通讯录范围由应用配置与审批决定 |
 
 **策略要点**：未登录或登录失效时命令直接报错并提示 `larkdown auth login`，**不静默降级**到应用凭证；应用凭证仅在显式传入全局 flag `--as bot` 时使用（`search`/`publish` 仅支持 user 身份）。
@@ -223,7 +223,8 @@ larkdown auth logout
 - `drive:export:readonly` - 导出电子表格
 - `board:whiteboard:node:read` - 读取白板节点（下载白板图片需要）
 - `drive:drive.comment:read` - 读取文档评论（--comments 选项需要）
-- `contact:contact.base:readonly` - 获取用户基本信息（评论显示真实姓名需要）
+- `contact:contact.base:readonly` - 获取用户基本信息
+- `contact:user.basic_profile:readonly` - 批量获取用户基本信息（正文 @mention 与评论显示真实姓名需要；走 `basic_batch`，不校验通讯录授权范围。该 scope 为后加入，refresh 不扩权，老 token 需重新 `larkdown auth login`）
 - `search:docs:read` - 搜索云文档/Wiki（search 命令需要；仅 user_access_token 通道。该 scope 为后加入，refresh 不扩权，老 token 需重新 `larkdown auth login`）
 
 ### E2E 测试

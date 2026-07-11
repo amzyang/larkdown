@@ -195,6 +195,59 @@ func (c *Client) BlockReplace(ctx context.Context, documentToken, blockID, conte
 	return err
 }
 
+// basicBatchGetUsersReq 是 contact/v3 basic_batch 的请求：user_id_type 走 query，user_ids 走 body。
+type basicBatchGetUsersReq struct {
+	UserIDType *lark.IDType `query:"user_id_type" json:"-"`
+	UserIDs    []string     `json:"user_ids"`
+}
+
+// BasicUser 是 basic_batch 返回的用户条目，user_id 的类型与请求的 user_id_type 一致。
+type BasicUser struct {
+	UserID string `json:"user_id,omitempty"`
+	Name   string `json:"name,omitempty"`
+}
+
+type basicBatchGetUsersData struct {
+	Users []BasicUser `json:"users,omitempty"`
+}
+
+type basicBatchGetUsersResp struct {
+	Code int64                   `json:"code,omitempty"`
+	Msg  string                  `json:"msg,omitempty"`
+	Data *basicBatchGetUsersData `json:"data,omitempty"`
+}
+
+// BasicBatchGetUsers 批量获取用户基本信息（姓名）。batch 上限 10（接口硬限制），
+// idType 须与 batch 中 id 类型一致。
+//
+// 走 POST /open-apis/contact/v3/users/basic_batch（SDK 无封装，RawRequest 模式同
+// BlockReplace）。与 contact/v3/users/batch 不同，该接口不校验应用通讯录授权范围：
+// 目标用户不在应用可见范围内也能返回姓名（对齐 lark-cli 的同款选择），
+// user/tenant token 均可用，所需 scope 为 contact:user.basic_profile:readonly。
+func (c *Client) BasicBatchGetUsers(ctx context.Context, batch []string, idType lark.IDType) ([]BasicUser, error) {
+	resp := new(basicBatchGetUsersResp)
+	_, err := c.larkClient.RawRequest(ctx, &lark.RawRequestReq{
+		Scope:  "Contact",
+		API:    "BasicBatchGetUsers",
+		Method: "POST",
+		URL:    "https://open.feishu.cn/open-apis/contact/v3/users/basic_batch",
+		Body: &basicBatchGetUsersReq{
+			UserIDType: &idType,
+			UserIDs:    batch,
+		},
+		NeedUserAccessToken:   c.userAccessToken != "",
+		NeedTenantAccessToken: c.userAccessToken == "",
+		MethodOption:          c.userMethodOption(),
+	}, resp)
+	if err != nil {
+		return nil, err
+	}
+	if resp.Data == nil {
+		return nil, nil
+	}
+	return resp.Data.Users, nil
+}
+
 // isImageContent 检测响应是否包含图片数据。
 // 先检查 HTTP Content-Type，如果是 application/octet-stream 则用 magic bytes 嗅探。
 func isImageContent(ct string, body []byte) bool {

@@ -56,7 +56,7 @@ brew install amzyang/tap/larkdown
 3. `refresh_token` 也已过期（默认约 7 天）或刷新被判定确定性失效（如 `invalid_grant`）→ 清除本地 token，命令报错提示重新 `larkdown auth login`
 4. 从未登录 → 命令报错提示 `larkdown auth login`（批量自动化可加 `--as bot` 显式使用应用身份）
 
-`larkdown auth status` 只读展示当前身份、access 与刷新令牌的有效期（不触发刷新）。使用用户身份能访问用户有权限的所有文档（数据范围随用户本人可见范围，评论真实姓名等通讯录数据无需应用侧审批）；应用身份（`--as bot`）则需文档显式授权给应用、通讯录范围由应用配置决定。
+`larkdown auth status` 只读展示当前身份、access 与刷新令牌的有效期（不触发刷新）。使用用户身份能访问用户有权限的所有文档（数据范围随用户本人可见范围）；应用身份（`--as bot`）则需文档显式授权给应用。@mention 与评论的用户真实姓名两种身份下均经 `basic_batch` 获取（不校验通讯录可见范围，应用需开通 `contact:user.basic_profile:readonly`，老 token 需重新 `larkdown auth login` 才能带上该 scope）。
 
 ### 无头 / 自动化登录（agent / CI / claude code）
 
