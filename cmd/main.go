@@ -116,6 +116,7 @@ func newConfigCommand() *cobra.Command {
 	fl := cmd.Flags()
 	fl.StringVar(&configOpts.appId, "appId", "", "Set app id for the OPEN API")
 	fl.StringVar(&configOpts.appSecret, "appSecret", "", "Set app secret for the OPEN API")
+	cmd.AddCommand(newConfigInitCommand())
 	return cmd
 }
 

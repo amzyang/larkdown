@@ -36,6 +36,12 @@ func TestCommandTreeContract(t *testing.T) {
 
 	want := map[string]cmdSpec{
 		"config": {Flags: map[string]flagSpec{"appId": {}, "appSecret": {}}},
+		"config init": {Flags: map[string]flagSpec{
+			"force":       {Def: "false"},
+			"no-wait":     {Def: "false"},
+			"device-code": {},
+			"json":        {Def: "false"},
+		}},
 		"download": {Aliases: []string{"dl"}, Flags: map[string]flagSpec{
 			"output":       {Short: "o", Def: "./"},
 			"recursive":    {Short: "r", Def: "false"},
