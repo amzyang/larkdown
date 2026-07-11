@@ -246,13 +246,23 @@ larkdown auth login --device-code <device_code> --json   # 成功输出 {"event"
 
 ```bash
 larkdown config                              # 查看当前配置
-larkdown config --appId xxx --appSecret xxx  # 设置凭证
+larkdown config --appId xxx --appSecret xxx  # 手动设置凭证
+larkdown config init                         # 一键自动创建 PersonalAgent 个人应用（浏览器授权后凭证自动落盘）
+```
+
+`config init` 无需预置任何凭证；已有凭证时需 `--force` 覆盖（同时清空旧应用登录令牌）。agent 场景优先两段式：
+
+```bash
+# 1) 发起注册，立即返回 device_code 与授权链接（单行 JSON 事件 app_registration）
+larkdown config init --no-wait --json
+# 2) 用户授权后，用 device_code 恢复轮询、换取并保存应用凭证（事件 app_registered）
+larkdown config init --device-code <device_code> --json
 ```
 
 ## 环境要求
 
 - **安装**：详见 [高级用法 - 安装](references/advanced-usage.md#安装)
-- **首次使用**：先 `larkdown config` 设置 App ID/Secret，再 `larkdown auth login` 授权
+- **首次使用**：先 `larkdown config init` 一键创建应用（或 `larkdown config` 手动设置 App ID/Secret），再 `larkdown auth login` 授权
 - **配置文件**：`~/.config/feishu2md/config.json`（路径字面量沿用旧名以兼容老配置）
 
 ## 注意事项

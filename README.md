@@ -23,7 +23,19 @@ brew install --HEAD amzyang/tap/larkdown
 
 ## 如何配置
 
-### 创建飞书机器人应用
+### 方式一：一键创建个人应用（推荐）
+
+```bash
+larkdown config init
+```
+
+`config init` 走匿名 OAuth 设备码流程自动创建一个飞书 PersonalAgent 个人应用：命令打印授权链接（并尽力自动打开浏览器），你登录飞书确认创建后，新应用的 APP_ID/APP_SECRET 自动写入配置，无需去开发者后台手动建应用、也无需手动开启设备码授权。
+
+- 已有凭证时需加 `--force` 覆盖（会同时清空旧应用的登录令牌，需重新 `larkdown auth login`）
+- agent/CI/无头环境可用两段式：`larkdown config init --no-wait --json` 拿到 `device_code`，授权后 `larkdown config init --device-code <code> --json` 换取凭证
+- 仅支持飞书（feishu.cn）；Lark 海外租户请用方式二
+
+### 方式二：手动创建企业自建应用
 
 配置文件需要填写 APP_ID 和 APP_SECRET 信息，请参考 [飞书官方文档](https://open.feishu.cn/document/ukTMukTMukTM/ukDNz4SO0MjL5QzM/get-) 获取。推荐设置为
 

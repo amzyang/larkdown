@@ -183,7 +183,13 @@ git merge upstream/master
 **使用流程**：
 
 ```bash
-# 1. 配置应用凭证（设备码流程与 --as bot 都需要）
+# 1. 配置应用凭证（设备码流程与 --as bot 都需要），两种方式任选：
+#    a) 一键自动创建 PersonalAgent 个人应用（匿名 device flow，浏览器授权后凭证自动落盘；
+#       已有凭证需 --force 覆盖，覆盖会同时清空旧应用的登录令牌）
+larkdown config init
+#       两段式（agent/CI/无头友好）：先 --no-wait --json 拿 device_code，人授权后再 --device-code 换凭证
+#       larkdown config init --no-wait --json  然后  larkdown config init --device-code <code> --json
+#    b) 手动：在 open.feishu.cn 创建应用后填入凭证
 larkdown config --appId <id> --appSecret <secret>
 
 # 2. OAuth 设备码流程登录获取 user_access_token（默认身份必需；旧命令 larkdown login 仍作隐藏别名可用）
@@ -212,6 +218,8 @@ larkdown auth logout
 - 进入应用 -> 安全设置，确认已**启用「设备码授权 / Device Flow」能力**（否则申请设备码会直接报错）
 - 确认「必需的飞书权限」已开通/审批（设备码申请携带的 scope 需与之匹配）
 - 兼容性：隐藏别名 `larkdown login` 与已废弃的 `--port` flag 仍保留（`--port` 为 no-op，不打断老脚本）
+
+`larkdown config init` 自动创建的 PersonalAgent 个人应用**免上述手动配置**（走匿名 device flow 注册端点，考证自 lark-cli；无需预置任何凭证）。注册端点为未公开接口，若发起失败可回退手动路径 `larkdown config --appId --appSecret`；Lark 海外租户不支持（仅 feishu.cn 域）。
 
 ### 必需的飞书权限
 
