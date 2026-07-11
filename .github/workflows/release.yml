@@ -32,3 +32,5 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
+          # 未配置该 secret 时为空串 → release 产物遥测禁用（安全降级，构建不失败）
+          SENTRY_DSN: ${{ secrets.SENTRY_DSN }}

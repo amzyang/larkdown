@@ -19,6 +19,9 @@ builds:
     ldflags:
       - -s -w
       - -X main.version={{ .Version }}
+      # envOrDefault：SENTRY_DSN 未设置（本地 snapshot / fork 无 secret）时降级为空串，
+      # 注入空 DSN = 遥测禁用，构建不失败；勿改为 .Env.SENTRY_DSN（env 缺失会直接渲染报错）
+      - -X main.sentryDSN={{ envOrDefault "SENTRY_DSN" "" }}
 
 archives:
   - id: larkdown
