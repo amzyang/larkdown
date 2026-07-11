@@ -92,6 +92,7 @@ cmd/           # CLI 入口 (spf13/cobra)
   mirror.go    # mirror 子命令：单向只下载同步为本地镜像目录（索引 + CLAUDE.md + 陈旧清理）
   follow.go    # --follow 执行器：主下载完成后 BFS 下载被引用文档到 _refs/
   upload.go    # upload 子命令：Markdown 上传/增量更新到飞书 Wiki（--source 指定目标文档）
+  sentry.go    # Sentry 遥测：DSN 解析纯函数、BeforeSend 隐私清洗、panic 上报 helper
 
 core/          # 核心业务逻辑
   client.go    # 飞书 API 客户端封装（lark SDK + 限流 4 req/s + 60s 超时）
@@ -114,6 +115,15 @@ skills/        # Agent Skill 定义（larkdown skill：SKILL.md + references/）
 
 testdata/      # 测试数据：JSON (DocxBlock) + MD (期望输出) golden file 对比
 ```
+
+### Sentry 错误上报边界
+
+Release 二进制内嵌 DSN（`.goreleaser.yaml` 经 `envOrDefault "SENTRY_DSN" ""` 注入 `main.sentryDSN`，secret 缺失时安全降级为禁用），本地 `just build` 不注入 → 天然禁用。**改动 `main()` 错误处理或 `PersistentPreRunE` 时须维持以下契约**：
+
+- DSN 优先级由纯函数 `resolveSentryDSN`（`cmd/sentry.go`）决定：`--sentry-dsn` flag（显式设空即禁用）> `DO_NOT_TRACK` > env `SENTRY_DSN`（`LookupEnv`，设空即禁用）> 编译期 fallback；决策表锁在 `cmd/sentry_test.go`
+- `sentry.Init` 在 root `PersistentPreRunE`（flag 解析后才拿得到值；`__complete` 补全路径跳过）。cobra 用法错误早于 Init 天然不上报
+- 上报判定在 `main()` 单点：**`*exitError`（用户输入/用户态错误）与 `context.Canceled`/`DeadlineExceeded` 永不上报**；新增用户可自助解决的错误应返回 `exitWithMessage` 而非裸 error，避免污染 Sentry
+- 隐私：`SendDefaultPII: false` + `scrubSentryEvent` 清空 ServerName/User；goroutine 内 panic 须 `defer sentryRecoverRepanic()`（main 的 recover 覆盖不到）
 
 ### 测试模式
 

@@ -399,6 +399,26 @@ larkdown dl "<your-url-here>" --debug &> debug.log
 
 - debug.log 文件
 
+## 错误上报与隐私（Telemetry）
+
+Release 二进制默认启用崩溃与意外错误上报（Sentry），帮助作者发现真实缺陷；从源码本地构建（`just build`）默认**不**上报。
+
+**收集什么**：错误消息与堆栈、larkdown 版本、操作系统/CPU 架构/Go 运行时版本。
+
+**不收集什么**：主机名、用户名、IP 地址、文档内容、token/凭证。
+
+**残余风险声明**：错误消息本身可能包含文档 token 或文件路径片段（例如某个文档下载失败的报错）。文档 token 不含凭证，无法用于访问文档内容。
+
+**关闭上报**（任选其一）：
+
+```bash
+larkdown --sentry-dsn="" <command> ...   # 单次关闭
+export SENTRY_DSN=""                     # 会话/永久关闭
+export DO_NOT_TRACK=1                    # 通用遥测退出惯例（consoledonottrack.com）
+```
+
+**上报到自己的 Sentry**：`--sentry-dsn <dsn>` 或 `export SENTRY_DSN=<dsn>`（优先级：`--sentry-dsn` > `DO_NOT_TRACK` > `SENTRY_DSN` env > 编译期内置）。
+
 ## FAQ
 
 ### 为什么无法下载知识库文档中的图片？
