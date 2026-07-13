@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 	"time"
 
@@ -246,6 +247,9 @@ func newPublishCommand() *cobra.Command {
 			if publishOpts.appID != "" && publishOpts.forceNew {
 				return exitWithMessage("--app-id cannot be used with --new", 1)
 			}
+			if publishOpts.share != "" && !slices.Contains(core.ValidShareValues, publishOpts.share) {
+				return exitWithMessage(fmt.Sprintf("--share must be one of %s (got %q)", strings.Join(core.ValidShareValues, " / "), publishOpts.share), 1)
+			}
 			return handlePublishCommand(args[0])
 		},
 	}
@@ -253,6 +257,10 @@ func newPublishCommand() *cobra.Command {
 	fl.StringVarP(&publishOpts.name, "name", "n", "", "App display name (defaults to the file/dir name)")
 	fl.StringVar(&publishOpts.appID, "app-id", "", "Reuse an existing app to update it (app_xxx or https://miaoda.feishu.cn/app/app_xxx)")
 	fl.BoolVar(&publishOpts.forceNew, "new", false, "Force creating a new app even if a publish record exists")
+	fl.StringVar(&publishOpts.share, "share", "", "App visibility: selected | tenant | public (default: open to the whole org on a new app, unchanged on update)")
+	_ = cmd.RegisterFlagCompletionFunc("share", func(*cobra.Command, []string, string) ([]cobra.Completion, cobra.ShellCompDirective) {
+		return core.ValidShareValues, cobra.ShellCompDirectiveNoFileComp
+	})
 	return cmd
 }
 

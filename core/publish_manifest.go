@@ -28,6 +28,7 @@ type PublishManifest struct {
 	TargetPath  string `yaml:"target_path,omitempty"`  // 发布目标绝对路径（key 是其 sha256，此处冗余存原值供人读/排查）
 	MiaodaAppID string `yaml:"miaoda_appid,omitempty"` // 妙搭应用 ID，重新发布时复用
 	MiaodaURL   string `yaml:"miaoda_url,omitempty"`   // 妙搭应用访问链接
+	MiaodaScope string `yaml:"miaoda_scope,omitempty"` // 最近一次生效的访问档位（Tenant/All）；空=未由 larkdown 设置
 	Name        string `yaml:"name,omitempty"`         // 应用/产物名称
 	PublishedAt string `yaml:"published_at,omitempty"` // 最近一次发布时间（RFC3339）
 }
