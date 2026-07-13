@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"charm.land/lipgloss/v2"
 	"github.com/amzyang/larkdown/core"
 )
 
@@ -16,6 +17,7 @@ type PublishOpts struct {
 	name     string
 	appID    string // 显式指定复用的 app_id 或妙搭应用链接
 	forceNew bool   // 强制新建应用（忽略 manifest）
+	share    string // 访问权限档位：selected | tenant | public（空=新建默认 tenant、更新保持）
 }
 
 var publishOpts = PublishOpts{}
@@ -76,7 +78,7 @@ func handlePublishCommand(path string) error {
 		fmt.Printf("正在打包并更新发布 %s（app_id=%s）...\n", path, appID)
 	}
 
-	result, err := client.PublishHTMLArtifact(ctx, name, path, appID)
+	result, err := client.PublishHTMLArtifact(ctx, name, path, appID, publishOpts.share)
 	if err != nil {
 		if appID != "" && core.IsMiaodaAppNotFound(err) {
 			return fmt.Errorf("妙搭应用 %s 不存在或无权访问（可能已被删除）；用 --new 重新创建一个新应用: %w", appID, err)
@@ -88,6 +90,7 @@ func handlePublishCommand(path string) error {
 	if werr := core.WritePublishManifest(sp, absPath, &core.PublishManifest{
 		MiaodaAppID: result.AppID,
 		MiaodaURL:   result.URL,
+		MiaodaScope: result.AppliedScope,
 		Name:        name,
 		PublishedAt: time.Now().Format(time.RFC3339),
 	}); werr != nil {
@@ -98,14 +101,12 @@ func handlePublishCommand(path string) error {
 	if result.IsNew {
 		verb = "已发布"
 	}
+	manageURL := core.MiaodaManageURL(result.AppID)
 	fmt.Printf("\n应用「%s」%s\n", name, verb)
 	fmt.Printf("  访问链接：%s\n", result.URL)
-	fmt.Printf("  编辑管理：%s\n", core.MiaodaManageURL(result.AppID))
-	if result.IsNew {
-		fmt.Printf("\n注意：新应用默认仅自己可见，他人打开会提示无权限。\n" +
-			"如需对外分享，请打开上方「编辑管理」链接 → 设置应用的访问权限为\n" +
-			"「获得链接的人可访问」或「互联网所有人」。\n")
-	}
+	fmt.Printf("  编辑管理：%s\n", manageURL)
+	// 经 lipgloss.Writer（colorprofile）输出，按终端能力自动降级颜色（管道/CI 去色）。
+	lipgloss.Fprintf(lipgloss.Writer, "\n%s\n", renderShareNotice(result.AppliedScope, result.ScopeErr, manageURL, result.IsNew))
 	fmt.Printf("\n后续更新此应用（复用 app_id）：\n  larkdown publish %s --app-id %s\n", shellQuote(path), result.AppID)
 	return nil
 }

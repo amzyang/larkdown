@@ -141,17 +141,114 @@ func (c *Client) PublishMiaodaHTML(ctx context.Context, appID string, tarball []
 	return resp.Data.URL, nil
 }
 
+// 妙搭 access-scope 后端 scope 枚举（对齐 lark-cli / 官方 SDK：All=互联网 / Tenant=机构内 / Range=指定人）。
+// larkdown 主动设置 Tenant / All；Range（指定人）需具体 targets，见 resolveShareScope。
+const (
+	MiaodaScopeTenant = "Tenant" // 机构内可见
+	MiaodaScopeAll    = "All"    // 互联网可访问
+)
+
+// --share flag 取值。ShareTenant 是新建发布的默认档位（「默认对机构开放」）。
+const (
+	ShareSelected = "selected" // 仅自己/指定人可见：不主动调用 access-scope
+	ShareTenant   = "tenant"   // 机构内可见
+	SharePublic   = "public"   // 互联网可访问
+)
+
+// ValidShareValues 是 --share 合法取值，供 cmd 层白名单校验与帮助文案复用。
+var ValidShareValues = []string{ShareSelected, ShareTenant, SharePublic}
+
+// resolveShareScope 决定本次发布是否设置访问权限、设为哪一档。
+//
+//	explicit: --share 的原值（"" 表示未指定）
+//	isNew:    本次是否新建了应用
+//
+// 返回 (serverScope, apply)：apply=false 表示不调用 access-scope，保持服务端现状。
+//
+// 默认（未指定 --share）语义：仅新建应用时开放到机构可见；更新已有应用不覆盖权限。
+//
+// 注意：larkdown 调的是官方 open API spark/v1 access-scope（与 lark-cli / 官方 SDK 一致）。
+// 实测该接口对妙搭 HTML 应用与网页「App availability」不同步：PUT/GET 自洽，但不改变网页
+// 实际访问控制（后者走妙搭内部 API，open token 触达不到）。larkdown 忠实提交此官方接口，
+// 是否真正生效属妙搭侧行为；cmd 层提示会如实告知可能需去门户手动核实。
+func resolveShareScope(explicit string, isNew bool) (serverScope string, apply bool) {
+	switch explicit {
+	case ShareTenant:
+		return MiaodaScopeTenant, true
+	case SharePublic:
+		return MiaodaScopeAll, true
+	case ShareSelected:
+		return "", false
+	default: // 未指定
+		if isNew {
+			return MiaodaScopeTenant, true
+		}
+		return "", false
+	}
+}
+
+// miaodaAccessScopeReq 设置访问权限请求体（对齐官方 spark/v1 UpdateAppVisibilityAppReqBody）。
+// require_login 仅 All（互联网）档有意义。
+type miaodaAccessScopeReq struct {
+	Scope        string `json:"scope"`
+	RequireLogin *bool  `json:"require_login,omitempty"`
+}
+
+// buildAccessScopeReq 构造 access-scope 请求体：仅 All 档带 require_login。
+func buildAccessScopeReq(serverScope string, requireLogin bool) *miaodaAccessScopeReq {
+	req := &miaodaAccessScopeReq{Scope: serverScope}
+	if serverScope == MiaodaScopeAll {
+		req.RequireLogin = &requireLogin
+	}
+	return req
+}
+
+// miaodaBaseResp 是仅关心 code/msg 的通用响应容器（access-scope 无需读 data）。
+type miaodaBaseResp struct {
+	Code int64  `json:"code"`
+	Msg  string `json:"msg"`
+}
+
+// SetMiaodaAccessScope PUT /apps/{app_id}/access-scope，设置应用访问范围（官方 spark/v1 接口）。
+// serverScope 取 MiaodaScopeTenant / MiaodaScopeAll；requireLogin 仅 All 档生效。
+func (c *Client) SetMiaodaAccessScope(ctx context.Context, appID, serverScope string, requireLogin bool) error {
+	resp := new(miaodaBaseResp)
+	_, err := c.larkClient.RawRequest(ctx, &lark.RawRequestReq{
+		Scope:               "Miaoda",
+		API:                 "SetAccessScope",
+		Method:              "PUT",
+		URL:                 fmt.Sprintf("%s/apps/%s/access-scope", miaodaAPIBase, appID),
+		Body:                buildAccessScopeReq(serverScope, requireLogin),
+		NeedUserAccessToken: true,
+		MethodOption:        c.userMethodOption(),
+	}, resp)
+	if err != nil {
+		return fmt.Errorf("设置妙搭应用访问权限失败: %w", err)
+	}
+	return nil
+}
+
 // PublishResult 发布结果
 type PublishResult struct {
 	AppID string
 	URL   string
 	IsNew bool // 是否新建了应用（false 表示复用已有 app_id 做更新）
+
+	// AppliedScope 本次提交的后端 scope（MiaodaScopeTenant/MiaodaScopeAll）；
+	// 未设置权限（ShareSelected 或更新保持）时为空。
+	AppliedScope string
+	// ScopeErr 记录设置权限失败——发布产物已上线，权限设置失败降级为警告而非阻断。
+	ScopeErr error
 }
 
-// PublishHTMLArtifact 高层封装：打包本地 HTML 文件/目录 → 发布，返回结果。
+// PublishHTMLArtifact 高层封装：打包本地 HTML 文件/目录 → 发布 →（按 share）提交访问权限。
 //   - appID 为空：新建应用后发布
 //   - appID 非空：复用该应用做更新发布（URL 不变）
-func (c *Client) PublishHTMLArtifact(ctx context.Context, name, path, appID string) (*PublishResult, error) {
+//
+// share 为 --share 原值（"" 表示未指定，按 resolveShareScope 的默认语义处理）。larkdown 忠实
+// 调用官方 spark/v1 access-scope 提交档位；对妙搭 HTML 应用是否真正改变网页 App availability
+// 属妙搭侧行为。设置失败不阻断（发布产物已上线），错误记入 ScopeErr 交由调用方提示。
+func (c *Client) PublishHTMLArtifact(ctx context.Context, name, path, appID, share string) (*PublishResult, error) {
 	if !c.HasUserToken() {
 		return nil, fmt.Errorf("发布妙搭应用需要 user_access_token，请先执行 larkdown login")
 	}
@@ -170,5 +267,14 @@ func (c *Client) PublishHTMLArtifact(ctx context.Context, name, path, appID stri
 	if err != nil {
 		return nil, err
 	}
-	return &PublishResult{AppID: appID, URL: url, IsNew: isNew}, nil
+	result := &PublishResult{AppID: appID, URL: url, IsNew: isNew}
+	if serverScope, apply := resolveShareScope(share, isNew); apply {
+		// require_login 固定 true——「组织外获得链接需登录」的较安全公开；免登录公开留待后续 flag。
+		if serr := c.SetMiaodaAccessScope(ctx, appID, serverScope, true); serr != nil {
+			result.ScopeErr = serr
+		} else {
+			result.AppliedScope = serverScope
+		}
+	}
+	return result, nil
 }

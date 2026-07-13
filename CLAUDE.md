@@ -116,6 +116,12 @@ skills/        # Agent Skill 定义（larkdown skill：SKILL.md + references/）
 testdata/      # 测试数据：JSON (DocxBlock) + MD (期望输出) golden file 对比
 ```
 
+### 发布（publish）访问权限
+
+`publish` 的 `--share` flag（`selected|tenant|public`）经官方 open API `spark/v1/apps/{id}/access-scope`（PUT，user_access_token，`spark:app:write`）提交访问档位，映射对齐 lark-cli / 官方 `oapi-sdk-go`：`selected`→不调用、`tenant`→`Tenant`、`public`→`All`（本租户可能禁用公开，返回 40000，降级为 `ScopeErr` 警告不阻断发布）。默认（未传 `--share`）仅新建应用时设 `Tenant`（机构可见），更新已有应用不覆盖权限（`resolveShareScope`，`core/miaoda.go`）。
+
+**行为（已 E2E 验证生效）**：`--share tenant` 经 access-scope PUT `Tenant` 会同步到网页「App availability」（→ All org members），实测生效并覆盖此前的手动设置；GET 读回同接口（需 `spark:app:read`）反映 open API 侧即时值。larkdown 的实现与 lark-cli / 官方 `oapi-sdk-go` 的 `spark/v1 UpdateAppVisibility` 逐字一致（端点/body/token/scope 全核对）。**注意坑**：妙搭侧同步偶有**传播延迟**，且短时间频繁改动会触发限流（`k_perm_ec_000009`，网页反复手动切换尤甚），故刚发布后 UI 可能短暂滞后——排查时以 GET access-scope 或稍后刷新为准，勿据一次即时 UI 误判为「不生效」（本功能开发时曾因延迟+限流+反复手动操作误判过）。`renderShareNotice`（`cmd/highlight.go`）对 `Tenant/All` 档确认已设并提醒暴露面 + 给出 `--share selected` 收窄方式。终端配色用 **lipgloss v2**（`charm.land/lipgloss/v2`），降级由 `lipgloss.Writer`（colorprofile）按 TTY/`NO_COLOR` 自动处理。
+
 ### Sentry 错误上报边界
 
 Release 二进制内嵌 DSN（`.goreleaser.yaml` 经 `envOrDefault "SENTRY_DSN" ""` 注入 `main.sentryDSN`，secret 缺失时安全降级为禁用），本地 `just build` 不注入 → 天然禁用。**改动 `main()` 错误处理或 `PersistentPreRunE` 时须维持以下契约**：
