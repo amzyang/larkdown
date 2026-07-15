@@ -49,6 +49,8 @@ just clean          # 删除构建产物
 
 注意：CLI `larkdown upload` 路径不依赖此排版规则（goldmark 把 tight/loose list 等价处理）；此策略仅服务于"网页粘贴"这条 round-trip 通道。
 
+另：download 覆写本地已有文件时，代码块围栏按**上传等价枚举**保留本地拼写（`core/preserve_fence.go` 的 `PreserveLocalFenceInfo`，issue #7）——本地 ` ```jsonc ` 与远端 JSON 枚举等价则不改写为规范名 `json`，与上传侧块签名按枚举 id 判等的语义对称；`mermaid`/`plantuml` 走特殊通道不参与。
+
 ### 增量更新的块更新策略（uploader/diff）
 
 `incrementalUpdate`（`uploader.go`）对变化的块按「能否原地更新」**三档分流**，**优先保留 block_id**（不破坏协作光标 / 评论锚点）：`ComputeDiff`(LCS) → `PairBlocks` 把同一变更区域的 delete+insert 配对（`diff.go`）→ 按档执行。

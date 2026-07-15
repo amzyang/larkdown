@@ -214,6 +214,12 @@ func downloadDocument(ctx context.Context, client *core.Client, url string, opts
 
 	outputPath := filepath.Join(opts.outputDir, mdName)
 
+	// 覆写本地已有文件时，语言枚举等价的代码块围栏保留本地拼写（如 jsonc↔json），
+	// 消除 round-trip 拼写噪音（issue #7）
+	if old, err := os.ReadFile(outputPath); err == nil {
+		markdown = core.PreserveLocalFenceInfo(string(old), markdown)
+	}
+
 	if !opts.noDiff {
 		showDiff(outputPath, markdown, dlConfig.Output.DiffStyle)
 	}
