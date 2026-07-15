@@ -53,4 +53,4 @@ require (
 	gopkg.in/ini.v1 v1.67.3 // indirect
 )
 
-replace github.com/chyroc/lark => github.com/amzyang/lark v0.0.0-20260601063629-516a89c24964
+replace github.com/chyroc/lark => github.com/amzyang/lark v0.0.0-20260715023817-0d817d353212

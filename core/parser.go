@@ -151,6 +151,14 @@ var DocxCodeLang2MdStr = map[lark.DocxCodeLanguage]string{
 	lark.DocxCodeLanguageVisual:       "vbnet",
 	lark.DocxCodeLanguageXML:          "xml",
 	lark.DocxCodeLanguageYAML:         "yaml",
+	lark.DocxCodeLanguageCMake:        "cmake",
+	lark.DocxCodeLanguageDiff:         "diff",
+	lark.DocxCodeLanguageGherkin:      "gherkin",
+	lark.DocxCodeLanguageGraphQL:      "graphql",
+	lark.DocxCodeLanguageGLSL:         "glsl",
+	lark.DocxCodeLanguageProperties:   "properties",
+	lark.DocxCodeLanguageSolidity:     "solidity",
+	lark.DocxCodeLanguageTOML:         "toml",
 }
 
 // mergeSpan 统一的合并单元格信息（行列跨度）
