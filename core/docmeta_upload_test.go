@@ -74,12 +74,72 @@ source: https://feishu.cn/wiki/abc123
 			description: "只有开始标记时应返回原内容",
 		},
 		{
-			name:        "HTML 注释非末尾不视为 frontmatter",
-			content:     "# 标题\n\n<!--\nsource: https://example.com/wiki/test\n-->\n\n正文继续\n",
-			wantFM:      nil,
-			wantBody:    "# 标题\n\n<!--\nsource: https://example.com/wiki/test\n-->\n\n正文继续\n",
+			name:    "HTML 注释非末尾仍视为 frontmatter",
+			content: "# 标题\n\n<!--\nsource: https://example.com/wiki/test\n-->\n\n正文继续\n",
+			wantFM: &FrontMatter{
+				Source: "https://example.com/wiki/test",
+			},
+			wantBody:    "# 标题\n\n正文继续\n",
 			wantErr:     false,
-			description: "HTML 注释不在文件末尾时不应被解析为 frontmatter",
+			description: "frontmatter 之后被追加内容时仍应识别，注释块从正文剔除",
+		},
+		{
+			name:    "frontmatter 后追加正文",
+			content: "正文内容\n\n<!--\nsource: https://example.com/wiki/test\n-->\n新增的一段\n",
+			wantFM: &FrontMatter{
+				Source: "https://example.com/wiki/test",
+			},
+			wantBody:    "正文内容\n\n新增的一段\n",
+			wantErr:     false,
+			description: "紧跟注释块追加的内容应并入正文",
+		},
+		{
+			name:    "frontmatter 后追加正文且无末尾换行",
+			content: "正文\n\n<!--\nsource: https://example.com/wiki/test\n-->\n追加",
+			wantFM: &FrontMatter{
+				Source: "https://example.com/wiki/test",
+			},
+			wantBody:    "正文\n\n追加\n",
+			wantErr:     false,
+			description: "正文应归一化为单个换行收尾",
+		},
+		{
+			name:    "frontmatter 后追加普通注释",
+			content: "正文\n\n<!--\nsource: https://example.com/wiki/test\n-->\n\n<!--\nTODO\n-->\n",
+			wantFM: &FrontMatter{
+				Source: "https://example.com/wiki/test",
+			},
+			wantBody:    "正文\n\n<!--\nTODO\n-->\n",
+			wantErr:     false,
+			description: "YAML 非法的注释块视为普通正文注释，不影响 source 块识别",
+		},
+		{
+			name:        "代码围栏内的 source 注释不误判",
+			content:     "# 说明\n\n```\n<!--\nsource: https://example.com/wiki/fake\n-->\n```\n",
+			wantFM:      nil,
+			wantBody:    "# 说明\n\n```\n<!--\nsource: https://example.com/wiki/fake\n-->\n```\n",
+			wantErr:     false,
+			description: "围栏内引用的 frontmatter 示例不应被解析",
+		},
+		{
+			name:    "围栏内示例与末尾真 frontmatter 共存",
+			content: "# 说明\n\n```\n<!--\nsource: https://example.com/wiki/fake\n-->\n```\n\n<!--\nsource: https://example.com/wiki/real\n-->\n",
+			wantFM: &FrontMatter{
+				Source: "https://example.com/wiki/real",
+			},
+			wantBody:    "# 说明\n\n```\n<!--\nsource: https://example.com/wiki/fake\n-->\n```\n",
+			wantErr:     false,
+			description: "应取围栏外的真 frontmatter，围栏内示例原样保留",
+		},
+		{
+			name:    "多个围栏外 source 块取最后一个",
+			content: "开头\n\n<!--\nsource: https://example.com/wiki/old\n-->\n\n中间\n\n<!--\nsource: https://example.com/wiki/new\n-->\n",
+			wantFM: &FrontMatter{
+				Source: "https://example.com/wiki/new",
+			},
+			wantBody:    "开头\n\n<!--\nsource: https://example.com/wiki/old\n-->\n\n中间\n",
+			wantErr:     false,
+			description: "多个候选块应取最靠后的，靠前的保留在正文",
 		},
 		{
 			name:        "HTML 注释无 source 不视为 frontmatter",

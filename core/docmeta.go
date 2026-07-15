@@ -305,34 +305,53 @@ func ParseFrontMatter(content string) (*FrontMatter, string, error) {
 	return parseLegacyFrontMatter(content)
 }
 
-// parseCommentFrontMatter 解析文件末尾 <!-- --> 格式的 frontmatter
+// parseCommentFrontMatter 解析 <!-- --> 格式的 frontmatter。
+// 不要求注释块位于文件末尾：frontmatter 之后被追加内容（agent/人工编辑）时仍能识别，
+// 追加内容并入正文，下次写回时归位到末尾。代码围栏内的注释块跳过（正文引用的
+// frontmatter 示例不算数）；YAML 非法或缺 source 的块视为普通正文注释；多个候选取最后一个。
 func parseCommentFrontMatter(content string) (*FrontMatter, string, error) {
-	lastOpen := strings.LastIndex(content, "<!--\n")
-	if lastOpen == -1 {
-		return nil, content, nil
+	lines := strings.Split(content, "\n")
+	var found *FrontMatter
+	start, end := -1, -1
+	inFence := false
+	for i := 0; i < len(lines); i++ {
+		trimmed := strings.TrimSpace(lines[i])
+		if strings.HasPrefix(trimmed, "```") || strings.HasPrefix(trimmed, "~~~") {
+			inFence = !inFence
+			continue
+		}
+		if inFence || lines[i] != "<!--" {
+			continue
+		}
+		closeIdx := -1
+		for j := i + 1; j < len(lines); j++ {
+			if lines[j] == "-->" {
+				closeIdx = j
+				break
+			}
+		}
+		if closeIdx == -1 {
+			continue
+		}
+		var fm FrontMatter
+		yamlContent := strings.Join(lines[i+1:closeIdx], "\n")
+		if err := yaml.Unmarshal([]byte(yamlContent), &fm); err == nil && fm.Source != "" {
+			found, start, end = &fm, i, closeIdx
+			i = closeIdx
+		}
 	}
-	closeIdx := strings.Index(content[lastOpen:], "\n-->")
-	if closeIdx == -1 {
-		return nil, content, nil
-	}
-	closeIdx += lastOpen
-	// 注释块后面必须没有非空内容（确保是文件末尾）
-	after := content[closeIdx+4:] // skip "\n-->"
-	if strings.TrimSpace(after) != "" {
+	if found == nil {
 		return nil, content, nil
 	}
 
-	yamlContent := content[lastOpen+5 : closeIdx]
-	var fm FrontMatter
-	if err := yaml.Unmarshal([]byte(yamlContent), &fm); err != nil {
-		return nil, content, fmt.Errorf("解析 frontmatter 失败: %w", err)
+	rest := append(append([]string{}, lines[:start]...), lines[end+1:]...)
+	// 剔除注释块后前后若均为空行，去掉一个，避免正文中出现双空行伪影
+	if start > 0 && start < len(rest) &&
+		strings.TrimSpace(rest[start-1]) == "" && strings.TrimSpace(rest[start]) == "" {
+		rest = append(rest[:start], rest[start+1:]...)
 	}
-	if fm.Source == "" {
-		return nil, content, nil
-	}
-
-	body := strings.TrimRight(content[:lastOpen], "\n") + "\n"
-	return &fm, body, nil
+	body := strings.TrimRight(strings.Join(rest, "\n"), "\n") + "\n"
+	return found, body, nil
 }
 
 // parseLegacyFrontMatter 解析旧格式（文件顶部 ---）的 frontmatter，向后兼容
