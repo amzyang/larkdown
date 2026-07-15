@@ -3,6 +3,7 @@ package core
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -68,6 +69,65 @@ type UploadResult struct {
 	IsNew       bool         // 是否为新建
 }
 
+// SourceGoneError 表示 source 指向的目标文档已删除、不存在或不可访问（issue #9）。
+// 携带飞书业务码以区分语义：131005（wiki 节点 not found）、
+// 1770003（docx resource deleted，通常在回收站）、1770002（docx not found）。
+type SourceGoneError struct {
+	Source string // 目标文档 URL
+	Code   int64  // 131005 / 1770002 / 1770003
+}
+
+func (e *SourceGoneError) Error() string {
+	const recreate = "若希望新建一篇文档：删除 markdown 文件末尾的 `<!-- source: ... -->` 注释块后重新执行 `larkdown upload`，并按需追加 `--space <space_id>` / `--parent <node_token>`。"
+	const retarget = "若已知新的目标文档 URL：使用 `larkdown upload <file> --source <新 URL>` 覆盖失效 source。"
+	switch e.Code {
+	case 131005:
+		return fmt.Sprintf(
+			"Wiki 节点不存在或当前账号无权限访问：%s\n"+
+				"  原因：飞书 API 返回 not found (code 131005)，可能是节点已被删除、被移动，或当前凭证无该知识库权限。\n"+
+				"  建议任选一种处理方式：\n"+
+				"    1) "+recreate+"\n"+
+				"    2) "+retarget+"\n"+
+				"    3) 若怀疑是权限问题：检查应用/用户是否有该 Wiki 的访问权，必要时执行 `larkdown login` 重新授权。",
+			e.Source,
+		)
+	case 1770003:
+		return fmt.Sprintf(
+			"目标文档已被删除（可能在回收站）：%s\n"+
+				"  原因：飞书 API 返回 resource deleted (code 1770003)，文档已被删除，通常仍可在回收站中找到。\n"+
+				"  建议任选一种处理方式：\n"+
+				"    1) 若希望继续更新原文档：在飞书回收站中恢复该文档后重试。\n"+
+				"    2) "+recreate+"\n"+
+				"    3) "+retarget,
+			e.Source,
+		)
+	default: // 1770002 及未来同语义码
+		return fmt.Sprintf(
+			"目标文档不存在：%s\n"+
+				"  原因：飞书 API 返回 not found (code %d)，token 可能拼写有误，或文档已被彻底删除。\n"+
+				"  建议任选一种处理方式：\n"+
+				"    1) "+recreate+"\n"+
+				"    2) "+retarget,
+			e.Source, e.Code,
+		)
+	}
+}
+
+// asSourceGone 判断 err 是否为「source 目标文档已删/不存在」类飞书错误
+// （errors.As 解包 %w 链，兼容 GetWikiNodeInfo 未包装与 GetDocxDocument 已包装两种形态），
+// 是则转为 *SourceGoneError，否则返回 nil。
+func asSourceGone(err error, source string) *SourceGoneError {
+	var le *lark.Error
+	if !errors.As(err, &le) {
+		return nil
+	}
+	switch le.Code {
+	case 131005, 1770002, 1770003:
+		return &SourceGoneError{Source: source, Code: le.Code}
+	}
+	return nil
+}
+
 // resolveDocumentID 从 source URL 推导 document_id
 func (u *Uploader) resolveDocumentID(ctx context.Context, source string) (string, error) {
 	docType, docToken, err := utils.ValidateDocumentURL(source)
@@ -75,21 +135,21 @@ func (u *Uploader) resolveDocumentID(ctx context.Context, source string) (string
 		return "", fmt.Errorf("无法解析 source URL: %w", err)
 	}
 	if docType == "docx" {
+		// 前置探活：目标已删除时在任何本地写回/远端写入前报错（issue #9）。
+		if _, err := u.client.GetDocxDocument(ctx, docToken); err != nil {
+			if sge := asSourceGone(err, source); sge != nil {
+				return "", sge
+			}
+			return "", err
+		}
 		return docToken, nil
 	}
-	// wiki URL: 需要 API 调用
+	// wiki URL: 需要 API 调用。get_node 对回收站中的节点返回 131005，天然充当探活；
+	// shortcut 节点 origin 被删的残余边缘刻意不做二次探活（会被后续块 API 以 1770003 硬终止，非静默）。
 	node, err := u.client.GetWikiNodeInfo(ctx, docToken)
 	if err != nil {
-		if lark.GetErrorCode(err) == 131005 {
-			return "", fmt.Errorf(
-				"Wiki 节点不存在或当前账号无权限访问：%s\n"+
-					"  原因：飞书 API 返回 not found (code 131005)，可能是节点已被删除、被移动，或当前凭证无该知识库权限。\n"+
-					"  建议任选一种处理方式：\n"+
-					"    1) 若希望新建一篇文档：删除 markdown 文件末尾的 `<!-- source: ... -->` 注释块后重新执行 `larkdown upload`，并按需追加 `--space <space_id>` / `--parent <node_token>`。\n"+
-					"    2) 若已知新的目标文档 URL：使用 `larkdown upload <file> --source <新 URL>` 覆盖失效 source。\n"+
-					"    3) 若怀疑是权限问题：检查应用/用户是否有该 Wiki 的访问权，必要时执行 `larkdown login` 重新授权。",
-				source,
-			)
+		if sge := asSourceGone(err, source); sge != nil {
+			return "", sge
 		}
 		return "", fmt.Errorf("获取 Wiki 节点信息失败: %w", err)
 	}

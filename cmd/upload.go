@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/amzyang/larkdown/core"
@@ -52,6 +53,11 @@ func handleUploadCommand(filePath string) error {
 		Verbose:         uploadOpts.verbose,
 	})
 	if err != nil {
+		// source 目标已删/不存在属用户可自助解决的错误，走 exitError 通道不上报 Sentry
+		var sge *core.SourceGoneError
+		if errors.As(err, &sge) {
+			return exitWithMessage(err.Error(), 1)
+		}
 		return err
 	}
 
