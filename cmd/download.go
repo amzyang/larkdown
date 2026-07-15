@@ -206,8 +206,10 @@ func downloadDocument(ctx context.Context, client *core.Client, url string, opts
 	// Compute markdown filename (使用 urlToken 确保文件名与 source URL 一致)
 	mdName := core.ComputeMdFilename(title, urlToken, dlConfig.Output)
 
-	// 检测并清理标题变更导致的旧文件
+	// 检测并清理标题变更导致的旧文件（入回收站前留存内容，供围栏拼写保留使用）
+	var staleContent []byte
 	if staleFile, err := core.FindStaleFile(opts.outputDir, mdName, urlToken); err == nil && staleFile != "" {
+		staleContent, _ = os.ReadFile(staleFile)
 		utils.MoveToTrash(staleFile)
 		fmt.Printf("标题变更: %s → %s (旧文件已移入回收站)\n", filepath.Base(staleFile), mdName)
 	}
@@ -215,9 +217,11 @@ func downloadDocument(ctx context.Context, client *core.Client, url string, opts
 	outputPath := filepath.Join(opts.outputDir, mdName)
 
 	// 覆写本地已有文件时，语言枚举等价的代码块围栏保留本地拼写（如 jsonc↔json），
-	// 消除 round-trip 拼写噪音（issue #7）
+	// 消除 round-trip 拼写噪音（issue #7）；标题变更时旧名文件即本地旧内容
 	if old, err := os.ReadFile(outputPath); err == nil {
 		markdown = core.PreserveLocalFenceInfo(string(old), markdown)
+	} else if len(staleContent) > 0 {
+		markdown = core.PreserveLocalFenceInfo(string(staleContent), markdown)
 	}
 
 	if !opts.noDiff {
