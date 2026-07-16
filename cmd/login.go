@@ -49,7 +49,7 @@ func handleLoginCommand(ctx context.Context, opts loginOptions) error {
 		return err
 	}
 
-	configPath, err := core.GetConfigFilePath()
+	configPath, err := resolveConfigPath()
 	if err != nil {
 		return err
 	}

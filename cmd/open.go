@@ -11,7 +11,7 @@ func handleOpenCommand(files []string) error {
 	var failed int
 	for _, filePath := range files {
 		if err := openOneFile(filePath); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: %s: %v\n", filePath, err)
+			fmt.Fprintf(os.Stderr, "警告: %s: %v\n", filePath, err)
 			failed++
 		}
 	}

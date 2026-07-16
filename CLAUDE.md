@@ -78,7 +78,7 @@ just clean          # 删除构建产物
 
 **PlantUML 画板免重建（`board_manifest.go`）：** 本地 ` ```plantuml ` 无 token，签名 `board:plantuml:<源hash>` 与远程 `board:<token>` 命名空间隔离、永不匹配，会每次重建。中心化边车 `<UserConfigDir>/feishu2md/boards/<document_id>.yaml`（`StatePaths`，按文档归一、不随工作目录移动）持久化「源 hash → board token」映射：上传前 `applyBoardTokenMappings` 按源 hash 查映射写回 `Board.Token`（且校验 token 仍在远程），命中后签名与远程 Equal → 跳过重建；新建画板后 `persistBoardMappings` 刷新映射。源改了则 hash 变、查不到 → 仍重建（board API 无法原地改画板内容，硬限制）。
 
-**图片/文件免重传（`media_manifest.go`）：** 手写文件名的本地图片/文件（非 `<token>_原名` 下载产物）无 token，签名 `media:new:<idx>` 与远程 `media:<token>` 命名空间隔离、永不匹配，会每次重传素材（飞书素材不幂等、token 抖动、`block_id` 被删除重建）。中心化边车 `<UserConfigDir>/feishu2md/media/<document_id>.yaml` 持久化「markdown 路径 → {token, md5}」映射：上传前 `applyMediaTokenMappings` 按路径查映射写回 `Image/File.Token`（校验 token 仍在远程），命中后签名与远程 Equal → 进第一档「Equal 内容检测」用边车基准 md5（`mediaChanged`，不依赖下载缓存）判定——内容未变跳过、已变走 `replace_image`/`replace_file` 原地替换**保 block_id**；各上传点 `recordMediaMapping` 累积、`persistMediaMappings` 刷新。路径即身份锚点：改图（路径不变内容变）→ md5 不符 → 原地替换保 id；重命名（路径变）→ 失配 → 当新图重传。与画板互补（画板按源 hash、媒体按路径），同解「本地无 token、签名隔离」；视频即 File 附件，一并覆盖。`--dryrun` 的「媒体内容替换」段会列出将被 `replace` 的媒体（内容真变才出现），用于核验增量是否真识别了改动。
+**图片/文件免重传（`media_manifest.go`）：** 手写文件名的本地图片/文件（非 `<token>_原名` 下载产物）无 token，签名 `media:new:<idx>` 与远程 `media:<token>` 命名空间隔离、永不匹配，会每次重传素材（飞书素材不幂等、token 抖动、`block_id` 被删除重建）。中心化边车 `<UserConfigDir>/feishu2md/media/<document_id>.yaml` 持久化「markdown 路径 → {token, md5}」映射：上传前 `applyMediaTokenMappings` 按路径查映射写回 `Image/File.Token`（校验 token 仍在远程），命中后签名与远程 Equal → 进第一档「Equal 内容检测」用边车基准 md5（`mediaChanged`，不依赖下载缓存）判定——内容未变跳过、已变走 `replace_image`/`replace_file` 原地替换**保 block_id**；各上传点 `recordMediaMapping` 累积、`persistMediaMappings` 刷新。路径即身份锚点：改图（路径不变内容变）→ md5 不符 → 原地替换保 id；重命名（路径变）→ 失配 → 当新图重传。与画板互补（画板按源 hash、媒体按路径），同解「本地无 token、签名隔离」；视频即 File 附件，一并覆盖。`--dry-run` 的「媒体内容替换」段会列出将被 `replace` 的媒体（内容真变才出现），用于核验增量是否真识别了改动。
 
 **本地文件链接（md2blocks/uploader）：** 正文行内链接指向本地存在的文件时分两类。`.md` 为**文档交叉引用**：读目标文件 frontmatter 的 `source` 转成指向对应飞书文档的普通链接（`resolveLocalMdLink`）；目标未上传则降级纯文本——块签名包含 link URL，待目标上传后再传本文档，增量 diff 会识别变更并原地 `update_text_elements` 补上链接。其余扩展名为**附件**：生成空 file 块后传素材再 `replace_file`。file 块无法经 descendant API 创建（服务端要求 file 挂在自动生成的 View 块下，显式 `page→file` 树报 1770030 invalid parent children relation），创建请求也不接受 `name` 等字段（1770001）：`flushFlatBlocks` 在 file 块处切分批次，file 块单独走官方 children API（`client.CreateDocxFileBlock`，请求体为空 `file:{}`），从响应（或补查 view 子块）取真实 file 块 id 供素材上传与 `replace_file`——文件名由素材文件名决定。
 
@@ -88,13 +88,15 @@ just clean          # 删除构建产物
 
 ```
 cmd/           # CLI 入口 (spf13/cobra)
-  main.go      # 命令注册（config, download, mirror, auth, upload, publish, diff, open, search, ocr, skills, completion）
+  main.go      # 命令注册（config[/init/get/set], download, mirror, auth, upload, publish, diff, open, search, ocr, skills, completion；帮助页按 Core/Setup/Additional 分组）
+               # 全局 --config / LARKDOWN_CONFIG 指定配置路径；LARKDOWN_APP_ID/SECRET 仅 --as bot 时内存覆盖凭证（cmd/config.go 的 loadConfig/loadConfigFile 双通道，写回路径绝不带 env 覆盖）
+               # download/upload/publish/auth status 支持 --json（stdout 纯 JSON、进度改道 stderr）；错误消息统一中文、帮助文本统一英文
   search.go    # search 子命令：关键词搜索可见云文档/Wiki（doc_wiki/search，仅 user token）
   download.go  # download/dl 子命令：单文档、批量文件夹、Wiki 递归下载
   mirror.go    # mirror 子命令：单向只下载同步为本地镜像目录（索引 + CLAUDE.md + 陈旧清理）
   follow.go    # --follow 执行器：主下载完成后 BFS 下载被引用文档到 _refs/
   upload.go    # upload 子命令：Markdown 上传/增量更新到飞书 Wiki（--source 指定目标文档）
-  sentry.go    # Sentry 遥测：DSN 解析纯函数、BeforeSend 隐私清洗、panic 上报 helper
+  sentry.go    # Sentry 遥测：DSN 解析纯函数、BeforeSend 隐私清洗、panic 上报 helper、隐藏诊断命令 larkdown sentry
 
 core/          # 核心业务逻辑
   client.go    # 飞书 API 客户端封装（lark SDK + 限流 4 req/s + 60s 超时）
@@ -130,8 +132,10 @@ Release 二进制内嵌 DSN（`.goreleaser.yaml` 经 `envOrDefault "SENTRY_DSN" 
 
 - DSN 优先级由纯函数 `resolveSentryDSN`（`cmd/sentry.go`）决定：`--sentry-dsn` flag（显式设空即禁用）> `DO_NOT_TRACK` > env `SENTRY_DSN`（`LookupEnv`，设空即禁用）> 编译期 fallback；决策表锁在 `cmd/sentry_test.go`
 - `sentry.Init` 在 root `PersistentPreRunE`（flag 解析后才拿得到值；`__complete` 补全路径跳过）。cobra 用法错误早于 Init 天然不上报
-- 上报判定在 `main()` 单点：**`*exitError`（用户输入/用户态错误）与 `context.Canceled`/`DeadlineExceeded` 永不上报**；新增用户可自助解决的错误应返回 `exitWithMessage` 而非裸 error，避免污染 Sentry
+- 上报判定在 `main()` 单点：**`*exitError`（用户输入/用户态错误）与 `context.Canceled`/`DeadlineExceeded` 永不上报**；新增用户可自助解决的错误应返回 `exitWithMessage` 而非裸 error，避免污染 Sentry。`*codedError` 是运行时故障的退出码载体（照常上报，仅退出码可覆写；diff 运行错误用它返回 exit 2）
+- 退出码约定（README 已文档化）：0 成功 / 1 失败或 diff 有差异 / 2 diff 运行错误 / 3 download·mirror 部分成功（部分成功走 `exitError` code 3，不上报）
 - 隐私：`SendDefaultPII: false` + `scrubSentryEvent` 清空 ServerName/User；goroutine 内 panic 须 `defer sentryRecoverRepanic()`（main 的 recover 覆盖不到）
+- 诊断：隐藏命令 `larkdown sentry` 展示 DSN 决策来源与状态；SDK 已初始化时发送带 `larkdown.e2e=1` tag 的 test message/exception 并 flush（flush 成功≠服务端已接收，需到 Sentry UI 按 event_id 核验）。遥测禁用时（`initSentry` 对空 DSN 不 Init）只展示状态、不发事件
 
 ### 测试模式
 
@@ -262,12 +266,12 @@ larkdown auth logout
 just build                                                   # 产出仓库根目录的 ./larkdown
 ./larkdown download <url>                                    # 下载真实文档，验证解析/排版
 ./larkdown upload <file.md> --source <url>                   # 上传到指定文档，验证反向转换
-./larkdown upload <file.md> --source <url> --dryrun          # 预览增量 diff，不落库
+./larkdown upload <file.md> --source <url> --dry-run          # 预览增量 diff，不落库
 ./larkdown upload <file.md> --source <url> --full            # 全量重建（删除远端所有块后重新上传）
 ```
 
 - 测试资源放在 `testdata/`：可复用已有 fixture（`roundtrip.*.json`、`upload.*.md` 等），也可按需在 `testdata/` 下新建临时文档/资源做 round-trip 验证。
-- E2E 打的是真实 API，受 `core/client.go` 限流（4 req/s）约束；`--dryrun` 可在不修改远端文档的前提下预览增量行为（更新已有文档默认即增量，`--full` 切换为全量重建）。
+- E2E 打的是真实 API，受 `core/client.go` 限流（4 req/s）约束；`--dry-run` 可在不修改远端文档的前提下预览增量行为（更新已有文档默认即增量，`--full` 切换为全量重建）。
 - 验证「上传/编辑后页面的实际渲染效果」可用 `/chrome-devtools-mcp:chrome-devtools` skill（或 chrome devtools mcp）打开飞书文档 URL，直接检查真实页面（排版、块结构、图片/白板等），而非仅看本地 Markdown 或 API 返回。
 - 需要脚本化或复杂浏览器操作（多步交互、批量校验、自动化 round-trip）时，用 `agent-browser` CLI（`agent-browser skills get core --full` 查用法）写脚本驱动飞书页面。
 

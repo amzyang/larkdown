@@ -31,13 +31,13 @@ func writeDiffOutput(text, style string) {
 func showDiff(outputPath, newContent, style string) {
 	oldContent, err := os.ReadFile(outputPath)
 	if err != nil {
-		fmt.Printf("New file: %s\n", outputPath)
+		fmt.Printf("新文件: %s\n", outputPath)
 		return
 	}
 
 	oldStr := string(oldContent)
 	if oldStr == newContent {
-		fmt.Printf("No changes: %s\n", outputPath)
+		fmt.Printf("无变化: %s\n", outputPath)
 		return
 	}
 
@@ -99,11 +99,7 @@ var diffOpts struct {
 }
 
 func handleDiffCommand(filePath string) error {
-	configPath, err := core.GetConfigFilePath()
-	if err != nil {
-		return err
-	}
-	config, err := core.ReadConfigFromFile(configPath)
+	config, configPath, err := loadConfig()
 	if err != nil {
 		return err
 	}
@@ -144,7 +140,7 @@ func handleDiffCommand(filePath string) error {
 	remoteMarkdown = strings.TrimRight(remoteMarkdown, "\n") + "\n"
 
 	if normalizedLocal == remoteMarkdown {
-		fmt.Printf("No changes: %s\n", filePath)
+		fmt.Printf("无变化: %s\n", filePath)
 		return nil
 	}
 

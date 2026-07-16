@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -18,16 +19,13 @@ type PublishOpts struct {
 	appID    string // 显式指定复用的 app_id 或妙搭应用链接
 	forceNew bool   // 强制新建应用（忽略 manifest）
 	share    string // 访问权限档位：selected | tenant | public（空=新建默认 tenant、更新保持）
+	json     bool   // 输出机读 JSON（app_id/url/manage_url 等），进度与提示改道 stderr
 }
 
 var publishOpts = PublishOpts{}
 
 func handlePublishCommand(path string) error {
-	configPath, err := core.GetConfigFilePath()
-	if err != nil {
-		return err
-	}
-	config, err := core.ReadConfigFromFile(configPath)
+	config, configPath, err := loadConfig()
 	if err != nil {
 		return err
 	}
@@ -55,7 +53,7 @@ func handlePublishCommand(path string) error {
 	var manifest *core.PublishManifest
 	if appID == "" && !publishOpts.forceNew {
 		if manifest, err = core.ReadPublishManifest(sp, absPath); err != nil {
-			log.Printf("warning: 读取发布记录失败: %v", err)
+			log.Printf("警告: 读取发布记录失败: %v", err)
 		}
 		if manifest != nil {
 			appID = manifest.MiaodaAppID
@@ -72,10 +70,15 @@ func handlePublishCommand(path string) error {
 		}
 	}
 
+	// --json 时进度改道 stderr，保持 stdout 纯 JSON
+	progress := os.Stdout
+	if publishOpts.json {
+		progress = os.Stderr
+	}
 	if appID == "" {
-		fmt.Printf("正在打包并新建发布 %s ...\n", path)
+		fmt.Fprintf(progress, "正在打包并新建发布 %s ...\n", path)
 	} else {
-		fmt.Printf("正在打包并更新发布 %s（app_id=%s）...\n", path, appID)
+		fmt.Fprintf(progress, "正在打包并更新发布 %s（app_id=%s）...\n", path, appID)
 	}
 
 	result, err := client.PublishHTMLArtifact(ctx, name, path, appID, publishOpts.share)
@@ -94,14 +97,30 @@ func handlePublishCommand(path string) error {
 		Name:        name,
 		PublishedAt: time.Now().Format(time.RFC3339),
 	}); werr != nil {
-		log.Printf("warning: 写入发布记录失败（下次将无法自动复用 app_id）: %v", werr)
+		log.Printf("警告: 写入发布记录失败（下次将无法自动复用 app_id）: %v", werr)
+	}
+
+	manageURL := core.MiaodaManageURL(result.AppID)
+	if publishOpts.json {
+		view := map[string]any{
+			"app_id":     result.AppID,
+			"url":        result.URL,
+			"manage_url": manageURL,
+			"name":       name,
+			"is_new":     result.IsNew,
+			"scope":      result.AppliedScope,
+		}
+		if result.ScopeErr != nil {
+			view["scope_error"] = result.ScopeErr.Error()
+		}
+		printJSON(os.Stdout, view)
+		return nil
 	}
 
 	verb := "已更新"
 	if result.IsNew {
 		verb = "已发布"
 	}
-	manageURL := core.MiaodaManageURL(result.AppID)
 	fmt.Printf("\n应用「%s」%s\n", name, verb)
 	fmt.Printf("  访问链接：%s\n", result.URL)
 	fmt.Printf("  编辑管理：%s\n", manageURL)

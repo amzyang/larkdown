@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 
 	"github.com/amzyang/larkdown/core"
 )
@@ -16,17 +17,14 @@ type UploadOpts struct {
 	incremental     bool
 	dryRun          bool
 	verbose         bool
+	json            bool // 输出机读 JSON（file/is_new/url），上传进度改道 stderr
 }
 
 var uploadOpts = UploadOpts{}
 
 func handleUploadCommand(filePath string) error {
 	// 加载配置
-	configPath, err := core.GetConfigFilePath()
-	if err != nil {
-		return err
-	}
-	config, err := core.ReadConfigFromFile(configPath)
+	config, configPath, err := loadConfig()
 	if err != nil {
 		return err
 	}
@@ -37,10 +35,13 @@ func handleUploadCommand(filePath string) error {
 		return err
 	}
 
-	// 创建上传器
+	// 创建上传器；--json 时把上传进度改道 stderr，保持 stdout 纯 JSON
 	uploader, err := core.NewUploader(client)
 	if err != nil {
 		return err
+	}
+	if uploadOpts.json {
+		uploader.SetOutput(os.Stderr)
 	}
 
 	// 执行上传
@@ -62,6 +63,14 @@ func handleUploadCommand(filePath string) error {
 	}
 
 	// 输出结果
+	if uploadOpts.json {
+		printJSON(os.Stdout, map[string]any{
+			"file":   filePath,
+			"is_new": result.IsNew,
+			"url":    result.FrontMatter.Source,
+		})
+		return nil
+	}
 	if uploadOpts.dryRun {
 		// dryrun 模式不显示成功提示
 	} else if result.IsNew {

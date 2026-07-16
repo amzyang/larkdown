@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"path/filepath"
@@ -19,12 +20,18 @@ type DownloadOpts struct {
 	outputDir   string
 	recursive   bool
 	comments    bool
+	noComments  bool // --no-comments：显式排除评论（优先于 --comments）
 	noDiff      bool
 	force       bool               // 忽略本地版本标记，强制重新下载
 	follow      bool               // 追加下载正文引用的 docx/wiki 文档到 _refs/
 	followDepth int                // follow 的引用层数（>=1）
+	asJSON      bool               // --json：结束时输出汇总 JSON，进度改道 stderr、隐含 no-diff
 	refs        *core.RefCollector // 正文引用收集器（nil = 不收集；并发 goroutine 共享）
 }
+
+// dlProgress 是 download/mirror 的进度输出通道；download --json 时改道 stderr，
+// 保持 stdout 只输出最终的汇总 JSON。
+var dlProgress io.Writer = os.Stdout
 
 // filterSelfRefs 过滤指向文档自身的引用（自链/锚点跳转），避免 follow 自我下载。
 func filterSelfRefs(refs []core.DocRef, selfTokens ...string) []core.DocRef {
@@ -46,6 +53,97 @@ func filterSelfRefs(refs []core.DocRef, selfTokens ...string) []core.DocRef {
 var dlOpts = DownloadOpts{}
 var dlConfig core.Config
 
+// dlReport 收集本次 download/mirror 的产出与部分失败（并发安全，nil 接收者为 no-op），
+// 驱动部分成功退出码（exit 3）与 --json 汇总。由 handleDownloadCommand/handleMirrorCommand 初始化。
+var dlReport *downloadReport
+
+// reportDoc 是一篇成功处理的文档（下载或未变化跳过）。
+type reportDoc struct {
+	Path    string `json:"path"`
+	Title   string `json:"title,omitempty"`
+	Skipped bool   `json:"skipped,omitempty"` // 远端未变化，跳过重新下载
+}
+
+// reportFailure 是一项失败：文档 URL、资产 token 等。
+type reportFailure struct {
+	Ref   string `json:"ref"`
+	Error string `json:"error"`
+}
+
+type downloadReport struct {
+	mu     sync.Mutex
+	docs   []reportDoc
+	files  []string
+	failed []reportFailure
+}
+
+func newDownloadReport() *downloadReport { return &downloadReport{} }
+
+func (r *downloadReport) AddDoc(path, title string, skipped bool) {
+	if r == nil {
+		return
+	}
+	r.mu.Lock()
+	r.docs = append(r.docs, reportDoc{Path: path, Title: title, Skipped: skipped})
+	r.mu.Unlock()
+}
+
+func (r *downloadReport) AddFile(path string) {
+	if r == nil {
+		return
+	}
+	r.mu.Lock()
+	r.files = append(r.files, path)
+	r.mu.Unlock()
+}
+
+func (r *downloadReport) AddFailure(ref string, err error) {
+	if r == nil {
+		return
+	}
+	r.mu.Lock()
+	r.failed = append(r.failed, reportFailure{Ref: ref, Error: err.Error()})
+	r.mu.Unlock()
+}
+
+// downloadReportView 是 download --json 的输出模型。
+type downloadReportView struct {
+	Documents []reportDoc     `json:"documents"`
+	Files     []string        `json:"files,omitempty"`
+	Failed    []reportFailure `json:"failed,omitempty"`
+}
+
+func (r *downloadReport) view() downloadReportView {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	view := downloadReportView{Documents: r.docs, Files: r.files, Failed: r.failed}
+	if view.Documents == nil {
+		view.Documents = []reportDoc{}
+	}
+	return view
+}
+
+// finalize 决定最终退出状态：无失败 → firstErr 原样（通常 nil）；有失败且有产出 →
+// 部分成功（exit 3，用户可自助场景，不上报 Sentry）；有失败且零产出 → 整体失败（exit 1）。
+func (r *downloadReport) finalize(firstErr error) error {
+	if r == nil {
+		return firstErr
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if len(r.failed) == 0 {
+		return firstErr
+	}
+	succeeded := len(r.docs) + len(r.files)
+	if succeeded == 0 {
+		if firstErr != nil {
+			return firstErr
+		}
+		return exitWithMessage(fmt.Sprintf("下载失败: %d 项失败", len(r.failed)), 1)
+	}
+	return exitWithMessage(fmt.Sprintf("部分内容下载失败: %d 项失败（成功 %d 项）", len(r.failed), succeeded), 3)
+}
+
 // nodeDisplayName 返回节点的显示名称，空标题时回退到 token
 func nodeDisplayName(title, token string) string {
 	name := utils.SanitizeFileName(strings.TrimSpace(title))
@@ -62,7 +160,7 @@ func downloadDocument(ctx context.Context, client *core.Client, url string, opts
 	if err != nil {
 		return nil, err
 	}
-	fmt.Println("Captured document token:", docToken)
+	fmt.Fprintln(dlProgress, "已识别文档 token:", docToken)
 
 	urlToken := docToken // 保存 URL 中的原始 token（用于文件命名）
 
@@ -92,7 +190,7 @@ func downloadDocument(ctx context.Context, client *core.Client, url string, opts
 	case "sheet":
 		return nil, downloadSheet(ctx, client, docToken, nodeTitle, opts.outputDir, url)
 	case "mindnote", "bitable":
-		fmt.Printf("跳过不支持的文档类型 '%s'\n", docType)
+		fmt.Fprintf(dlProgress, "跳过不支持的文档类型 '%s'\n", docType)
 		return nil, nil
 	case "docx":
 		// 继续原有的 docx 处理逻辑
@@ -108,16 +206,17 @@ func downloadDocument(ctx context.Context, client *core.Client, url string, opts
 			if opts.refs != nil && !rec.RefsRecorded {
 				// 旧版记录未采集正文引用：--follow 需要 refs 才能保证 prune 不误删 _refs/，
 				// 本次视为过期重新下载补录（仅发生一次，新记录带 refs 后恢复跳过）
-				fmt.Printf("下载记录缺引用信息，重新下载补录: %s\n", rec.Path)
+				fmt.Fprintf(dlProgress, "下载记录缺引用信息，重新下载补录: %s\n", rec.Path)
 			} else if content, err := os.ReadFile(rec.Path); err == nil {
 				if doc, err := client.GetDocxDocument(ctx, docToken); err == nil &&
 					core.DownloadVersion(objEditTime, doc.RevisionID) == rec.Version {
-					fmt.Printf("未变化，跳过: %s\n", rec.Path)
+					fmt.Fprintf(dlProgress, "未变化，跳过: %s\n", rec.Path)
 					_, body, _ := core.ParseFrontMatter(string(content))
 					meta := core.LocalDocMeta(rec.Path, body)
 					// 跳过拉块时回放记录中的引用，保证 --follow 的 refs 集合完整
 					// （否则二次 mirror 全部命中跳过 → refs 为空 → prune 误删 _refs/）
 					opts.refs.Add(filterSelfRefs(rec.Refs, urlToken, docToken)...)
+					dlReport.AddDoc(rec.Path, meta.Title, true)
 					return &meta, nil
 				}
 			}
@@ -159,6 +258,7 @@ func downloadDocument(ctx context.Context, client *core.Client, url string, opts
 			if err != nil {
 				log.Printf("警告: 图片下载失败，跳过 %s: %v", imgToken, err)
 				failedAssets = append(failedAssets, imgToken)
+				dlReport.AddFailure(imgToken, err)
 				if isPermissionError(err) {
 					hasPermErr = true
 				}
@@ -173,6 +273,7 @@ func downloadDocument(ctx context.Context, client *core.Client, url string, opts
 			if err != nil {
 				log.Printf("警告: 附件下载失败，跳过 %s: %v", fileToken, err)
 				failedAssets = append(failedAssets, fileToken)
+				dlReport.AddFailure(fileToken, err)
 				if isPermissionError(err) {
 					hasPermErr = true
 				}
@@ -211,7 +312,7 @@ func downloadDocument(ctx context.Context, client *core.Client, url string, opts
 	if staleFile, err := core.FindStaleFile(opts.outputDir, mdName, urlToken); err == nil && staleFile != "" {
 		staleContent, _ = os.ReadFile(staleFile)
 		utils.MoveToTrash(staleFile)
-		fmt.Printf("标题变更: %s → %s (旧文件已移入回收站)\n", filepath.Base(staleFile), mdName)
+		fmt.Fprintf(dlProgress, "标题变更: %s → %s (旧文件已移入回收站)\n", filepath.Base(staleFile), mdName)
 	}
 
 	outputPath := filepath.Join(opts.outputDir, mdName)
@@ -231,7 +332,8 @@ func downloadDocument(ctx context.Context, client *core.Client, url string, opts
 	if err = os.WriteFile(outputPath, []byte(markdown), 0o644); err != nil {
 		return nil, err
 	}
-	fmt.Printf("Downloaded markdown file to %s\n", outputPath)
+	fmt.Fprintf(dlProgress, "已下载 Markdown 文件: %s\n", outputPath)
+	dlReport.AddDoc(outputPath, title, false)
 
 	// 记录下载版本与正文引用（供下次跳过未变化文档并回放 refs）；
 	// 素材下载不完整时清除记录，保证下次重试
@@ -243,11 +345,11 @@ func downloadDocument(ctx context.Context, client *core.Client, url string, opts
 
 	if len(failedAssets) > 0 {
 		total := len(parser.ImgTokens) + len(parser.FileTokens)
-		fmt.Printf("\n⚠ %d/%d 张图片/附件下载失败\n", len(failedAssets), total)
+		fmt.Fprintf(dlProgress, "\n⚠ %d/%d 张图片/附件下载失败\n", len(failedAssets), total)
 		if hasPermErr {
-			fmt.Println("  可能原因: 应用或用户对文档缺少复制或者编辑权限（图片下载需要 复制 或 Edit 权限或协作者身份）")
-			fmt.Println("  解决方案: 通过「分享」将文档授予应用或当前用户为协作者或可复制")
-			fmt.Println("  参考: https://open.feishu.cn/document/server-docs/docs/faq#16c6475a")
+			fmt.Fprintln(dlProgress, "  可能原因: 应用或用户对文档缺少复制或者编辑权限（图片下载需要 复制 或 Edit 权限或协作者身份）")
+			fmt.Fprintln(dlProgress, "  解决方案: 通过「分享」将文档授予应用或当前用户为协作者或可复制")
+			fmt.Fprintln(dlProgress, "  参考: https://open.feishu.cn/document/server-docs/docs/faq#16c6475a")
 		}
 	}
 
@@ -299,7 +401,7 @@ func downloadDocuments(ctx context.Context, client *core.Client, url string, see
 	if err != nil {
 		return err
 	}
-	fmt.Println("Captured folder token:", folderToken)
+	fmt.Fprintln(dlProgress, "已识别文件夹 token:", folderToken)
 
 	var mu sync.Mutex
 	var firstErr error
@@ -327,6 +429,7 @@ func downloadDocuments(ctx context.Context, client *core.Client, url string, see
 					defer sentryRecoverRepanic()
 					meta, err := downloadDocument(ctx, client, _url, &opts)
 					if err != nil {
+						dlReport.AddFailure(_url, err)
 						mu.Lock()
 						if firstErr == nil {
 							firstErr = err
@@ -381,6 +484,7 @@ func downloadWikiNodeRecursive(ctx context.Context, client *core.Client,
 		nodes, err := client.GetWikiNodeList(ctx, spaceID, parentNodeToken)
 		if err != nil {
 			log.Printf("警告: 获取子节点列表失败，跳过该子树: %v", err)
+			dlReport.AddFailure(spaceID, err)
 			collectErr(err)
 			return
 		}
@@ -403,6 +507,7 @@ func downloadWikiNodeRecursive(ctx context.Context, client *core.Client,
 					meta, err := downloadDocument(ctx, client, _url, &opts)
 					if err != nil {
 						log.Printf("警告: 文档下载失败，跳过: %v", err)
+						dlReport.AddFailure(_url, err)
 						collectErr(err)
 					} else if meta != nil && docsIndex != nil {
 						mu.Lock()
@@ -419,6 +524,7 @@ func downloadWikiNodeRecursive(ctx context.Context, client *core.Client,
 					defer sentryRecoverRepanic()
 					if err := downloadFile(ctx, client, token, title, outDir, "file"); err != nil {
 						log.Printf("警告: 文件下载失败，跳过: %v", err)
+						dlReport.AddFailure(token, err)
 						collectErr(err)
 					}
 					wg.Done()
@@ -431,13 +537,14 @@ func downloadWikiNodeRecursive(ctx context.Context, client *core.Client,
 					defer sentryRecoverRepanic()
 					if err := downloadSheet(ctx, client, token, title, outDir, sourceURL); err != nil {
 						log.Printf("警告: 电子表格下载失败，跳过: %v", err)
+						dlReport.AddFailure(token, err)
 						collectErr(err)
 					}
 					wg.Done()
 					<-semaphore
 				}(n.ObjToken, n.Title, folderPath, prefixURL+"/wiki/"+n.NodeToken)
 			case "mindnote", "bitable":
-				fmt.Printf("跳过不支持的文档类型 '%s': %s\n", n.ObjType, n.Title)
+				fmt.Fprintf(dlProgress, "跳过不支持的文档类型 '%s': %s\n", n.ObjType, n.Title)
 			}
 		}
 	}
@@ -489,35 +596,30 @@ func downloadWiki(ctx context.Context, client *core.Client, url string, seen *to
 	return nil
 }
 
-func handleDownloadCommand(url string) error {
-	// Load config
-	configPath, err := core.GetConfigFilePath()
-	if err != nil {
-		return err
+// downloadRootDir 决定本次 download 的根输出目录（--follow 的 _refs/ 挂靠点）：
+// 唯一目标是本地 .md 且未显式 -o 时切到该文件所在目录（保持单目标旧契约，
+// _refs/ 与主文档同目录）；多目标或显式 -o 时维持 -o 目录。
+func downloadRootDir(urls []string, outputDir string) string {
+	if len(urls) == 1 && strings.HasSuffix(urls[0], ".md") && outputDir == "./" {
+		return filepath.Dir(urls[0])
 	}
-	config, err := core.ReadConfigFromFile(configPath)
+	return outputDir
+}
+
+func handleDownloadCommand(urls []string) error {
+	// Load config
+	config, configPath, err := loadConfig()
 	if err != nil {
 		return err
 	}
 	dlConfig = *config
+	dlReport = newDownloadReport()
+	dlOpts.outputDir = downloadRootDir(urls, dlOpts.outputDir)
 
-	// 检测参数是否为本地 .md 文件，从 frontmatter 提取源 URL
-	if strings.HasSuffix(url, ".md") {
-		if content, err := os.ReadFile(url); err == nil {
-			fm, _, err := core.ParseFrontMatter(string(content))
-			if err != nil {
-				return fmt.Errorf("解析 %s 的 frontmatter 失败: %w", url, err)
-			}
-			if fm == nil || fm.Source == "" {
-				return fmt.Errorf("%s 中未找到 source URL", url)
-			}
-			// 输出目录默认为 .md 文件所在目录（若用户未通过 -o 指定）
-			if dlOpts.outputDir == "./" {
-				dlOpts.outputDir = filepath.Dir(url)
-			}
-			fmt.Printf("从 %s 提取源 URL: %s\n", url, fm.Source)
-			url = fm.Source
-		}
+	// --json：进度改道 stderr、隐含关闭 diff 输出，stdout 只留最终汇总 JSON
+	if dlOpts.asJSON {
+		dlProgress = os.Stderr
+		dlOpts.noDiff = true
 	}
 
 	ctx := context.Background()
@@ -526,45 +628,89 @@ func handleDownloadCommand(url string) error {
 		return err
 	}
 
+	// --follow：收集正文引用，并用 seen 记录本次下载覆盖的 token（多 URL 与树内互引不重复进 _refs）
+	var seen *tokenSet
+	if dlOpts.follow {
+		dlOpts.refs = core.NewRefCollector()
+		seen = newTokenSet()
+	}
+
+	var firstErr error
+	for _, url := range urls {
+		if err := downloadOneTarget(ctx, client, url, seen); err != nil {
+			if len(urls) == 1 {
+				return err
+			}
+			log.Printf("警告: %s 下载失败: %v", url, err)
+			dlReport.AddFailure(url, err)
+			if firstErr == nil {
+				firstErr = err
+			}
+		}
+	}
+
+	if dlOpts.follow {
+		runFollowPhase(ctx, client, dlOpts.outputDir, dlOpts.refs.Drain(), dlOpts.followDepth, seen, nil, &dlOpts)
+	}
+	if dlOpts.asJSON {
+		printJSON(os.Stdout, dlReport.view())
+	}
+	return dlReport.finalize(firstErr)
+}
+
+// downloadOneTarget 下载单个目标（URL 或本地 .md 文件）。
+// .md 目标的输出目录默认覆盖为文件所在目录，仅作用于本目标（值拷贝，不影响其余 URL）。
+func downloadOneTarget(ctx context.Context, client *core.Client, url string, seen *tokenSet) error {
+	opts := dlOpts
+
+	// 检测参数是否为本地 .md 文件，从 frontmatter 提取源 URL
+	if strings.HasSuffix(url, ".md") {
+		content, err := os.ReadFile(url)
+		if err != nil {
+			return fmt.Errorf("无法读取 %s: %w", url, err)
+		}
+		fm, _, err := core.ParseFrontMatter(string(content))
+		if err != nil {
+			return fmt.Errorf("解析 %s 的 frontmatter 失败: %w", url, err)
+		}
+		if fm == nil || fm.Source == "" {
+			return fmt.Errorf("%s 中未找到 source URL", url)
+		}
+		// 输出目录默认为 .md 文件所在目录（若用户未通过 -o 指定）
+		if opts.outputDir == "./" {
+			opts.outputDir = filepath.Dir(url)
+		}
+		fmt.Fprintf(dlProgress, "从 %s 提取源 URL: %s\n", url, fm.Source)
+		url = fm.Source
+	}
+
 	// 解析 URL 类型
 	parsed, err := utils.ParseFeishuUrl(url)
 	if err != nil {
 		return err
 	}
-
-	// --follow：收集正文引用，并用 seen 记录本次下载覆盖的 token（树内互引不重复进 _refs）
-	var seen *tokenSet
-	if dlOpts.follow {
-		dlOpts.refs = core.NewRefCollector()
-		seen = newTokenSet()
-		seen.Add(parsed.Token)
-	}
+	seen.Add(parsed.Token)
 
 	switch parsed.Type {
 	case utils.UrlTypeFolder:
-		if !dlOpts.recursive {
-			return fmt.Errorf("下载文件夹需要指定 -r 选项")
+		if !opts.recursive {
+			return exitWithMessage(fmt.Sprintf("下载文件夹需要指定 -r 选项，例如: larkdown download -r %s", shellQuote(url)), 1)
 		}
-		if err := downloadDocuments(ctx, client, url, seen, nil); err != nil {
-			return err
-		}
+		return downloadDocuments(ctx, client, url, seen, nil)
 
 	case utils.UrlTypeWikiSettings:
-		if !dlOpts.recursive {
-			return fmt.Errorf("下载知识库需要指定 -r 选项")
+		if !opts.recursive {
+			return exitWithMessage(fmt.Sprintf("下载知识库需要指定 -r 选项，例如: larkdown download -r %s", shellQuote(url)), 1)
 		}
-		if err := downloadWiki(ctx, client, url, seen); err != nil {
-			return err
-		}
+		return downloadWiki(ctx, client, url, seen)
 
 	case utils.UrlTypeFile:
-		return downloadFile(ctx, client, parsed.Token, "", dlOpts.outputDir, "file")
+		return downloadFile(ctx, client, parsed.Token, "", opts.outputDir, "file")
 
 	case utils.UrlTypeDocx:
 		// 普通 docx 文档，-r 被忽略
-		if _, err := downloadDocument(ctx, client, url, &dlOpts); err != nil {
-			return err
-		}
+		_, err := downloadDocument(ctx, client, url, &opts)
+		return err
 
 	case utils.UrlTypeWikiNode:
 		// Wiki 节点，需要判断是 space_id 还是 node_token
@@ -580,49 +726,43 @@ func handleDownloadCommand(url string) error {
 		switch {
 		case isSpace:
 			// 是 space_id，需要 -r
-			if !dlOpts.recursive {
-				return fmt.Errorf("下载知识库需要指定 -r 选项")
+			if !opts.recursive {
+				return exitWithMessage(fmt.Sprintf("下载知识库需要指定 -r 选项，例如: larkdown download -r %s", shellQuote(url)), 1)
 			}
-			if err := downloadWiki(ctx, client, url, seen); err != nil {
-				return err
-			}
+			return downloadWiki(ctx, client, url, seen)
 
-		case dlOpts.recursive && node.HasChild:
+		case opts.recursive && node.HasChild:
 			displayName := nodeDisplayName(node.Title, node.NodeToken)
 
 			// 先下载根节点自身（不递归）
-			rootOpts := DownloadOpts{outputDir: dlOpts.outputDir, comments: dlOpts.comments, noDiff: dlOpts.noDiff, force: dlOpts.force, refs: dlOpts.refs}
+			rootOpts := DownloadOpts{outputDir: opts.outputDir, comments: opts.comments, noDiff: opts.noDiff, force: opts.force, refs: opts.refs}
 			if _, rootErr := downloadDocument(ctx, client, url, &rootOpts); rootErr != nil {
 				log.Printf("警告: 根节点下载失败，继续下载子节点: %v", rootErr)
 			}
 
 			// 递归下载子节点
-			downloadWikiNodeRecursive(ctx, client, parsed.PrefixURL, spaceID, displayName, dlOpts.outputDir, &node.NodeToken, nil, seen)
+			downloadWikiNodeRecursive(ctx, client, parsed.PrefixURL, spaceID, displayName, opts.outputDir, &node.NodeToken, nil, seen)
+			return nil
 
 		default:
 			// 下载单个 Wiki 节点文档
-			if _, err := downloadDocument(ctx, client, url, &dlOpts); err != nil {
-				return err
-			}
+			_, err := downloadDocument(ctx, client, url, &opts)
+			return err
 		}
 
 	default:
-		return fmt.Errorf("unsupported URL type: %s", url)
+		return fmt.Errorf("不支持的 URL 类型: %s", url)
 	}
-
-	if dlOpts.follow {
-		runFollowPhase(ctx, client, dlOpts.outputDir, dlOpts.refs.Drain(), dlOpts.followDepth, seen, nil, &dlOpts)
-	}
-	return nil
 }
 
 func downloadFile(ctx context.Context, client *core.Client, fileToken, title, outputDir, objType string) error {
 	// Download the file using DownloadFileWithMeta (with fallback to placeholder)
 	filePath, err := client.DownloadFileWithMeta(ctx, fileToken, outputDir, objType, title)
 	if err != nil {
-		return fmt.Errorf("failed to download file %s: %v", title, err)
+		return fmt.Errorf("下载文件 %s 失败: %v", title, err)
 	}
-	fmt.Printf("Downloaded file to %s\n", filePath)
+	fmt.Fprintf(dlProgress, "已下载文件: %s\n", filePath)
+	dlReport.AddFile(filePath)
 	return nil
 }
 
@@ -638,11 +778,12 @@ func downloadFile(ctx context.Context, client *core.Client, fileToken, title, ou
 func downloadSheet(ctx context.Context, client *core.Client, sheetToken, title, outputDir, sourceURL string) error {
 	filePath, err := client.ExportSheet(ctx, sheetToken, outputDir, title)
 	if err == nil {
-		fmt.Printf("已下载电子表格: %s\n", filePath)
+		fmt.Fprintf(dlProgress, "已下载电子表格: %s\n", filePath)
+		dlReport.AddFile(filePath)
 		return nil
 	}
 	if !core.IsPermissionError(err) {
-		return fmt.Errorf("failed to export sheet %s: %v", title, err)
+		return fmt.Errorf("导出电子表格 %s 失败: %v", title, err)
 	}
 	log.Printf("sheet %q 无 xlsx 导出权限（owner 已禁用），降级 Markdown", title)
 
@@ -650,6 +791,7 @@ func downloadSheet(ctx context.Context, client *core.Client, sheetToken, title, 
 	if mdErr != nil {
 		return fmt.Errorf("sheet %q xlsx 与 Markdown 均失败: xlsx=%v; md=%v", title, err, mdErr)
 	}
-	fmt.Printf("已导出为 Markdown: %s（源文档禁止 xlsx 导出）\n", mdPath)
+	fmt.Fprintf(dlProgress, "已导出为 Markdown: %s（源文档禁止 xlsx 导出）\n", mdPath)
+	dlReport.AddFile(mdPath)
 	return nil
 }

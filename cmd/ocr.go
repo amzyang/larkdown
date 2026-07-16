@@ -9,7 +9,6 @@ import (
 	"os/exec"
 	"strings"
 
-	"github.com/amzyang/larkdown/core"
 	"github.com/chyroc/lark"
 )
 
@@ -21,11 +20,7 @@ func handleOCRCommand(ctx context.Context, imagePath string) error {
 
 	encoded := base64.StdEncoding.EncodeToString(imageData)
 
-	configPath, err := core.GetConfigFilePath()
-	if err != nil {
-		return err
-	}
-	config, err := core.ReadConfigFromFile(configPath)
+	config, configPath, err := loadConfig()
 	if err != nil {
 		return err
 	}

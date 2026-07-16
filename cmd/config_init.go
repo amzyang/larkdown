@@ -26,6 +26,9 @@ func newConfigInitCommand() *cobra.Command {
 		Use:   "init",
 		Short: "Create a Feishu PersonalAgent app automatically and save its credentials",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if len(args) > 0 {
+				return exitWithMessage("config init 不接受位置参数", 1)
+			}
 			force, _ := cmd.Flags().GetBool("force")
 			noWait, _ := cmd.Flags().GetBool("no-wait")
 			deviceCode, _ := cmd.Flags().GetString("device-code")
@@ -76,7 +79,7 @@ func handleConfigInitCommand(ctx context.Context, opts configInitOptions) error 
 		return err
 	}
 
-	configPath, err := core.GetConfigFilePath()
+	configPath, err := resolveConfigPath()
 	if err != nil {
 		return err
 	}

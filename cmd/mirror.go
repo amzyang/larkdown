@@ -16,8 +16,10 @@ import (
 type MirrorOpts struct {
 	outputDir   string
 	comments    bool
+	noComments  bool // --no-comments：显式排除评论（优先于 --comments）
 	force       bool
 	noPrune     bool // 保留远端已不存在的本地文件（跳过清理）
+	dryRun      bool // --dry-run：只列远端树与 prune 候选，不写任何文件
 	follow      bool // 追加下载正文引用的 docx/wiki 文档到 _refs/
 	followDepth int  // follow 的引用层数（>=1）
 	followSet   bool // --follow 是否显式传入（与边车记录合并时 flag 优先）
@@ -61,11 +63,7 @@ func (s *tokenSet) Has(token string) bool {
 // 同步后清理远端已不存在的本地文档（移入回收站）。
 func handleMirrorCommand(urlArg string) error {
 	// Load config
-	configPath, err := core.GetConfigFilePath()
-	if err != nil {
-		return err
-	}
-	config, err := core.ReadConfigFromFile(configPath)
+	config, configPath, err := loadConfig()
 	if err != nil {
 		return err
 	}
@@ -120,6 +118,7 @@ func handleMirrorCommand(urlArg string) error {
 		noDiff:    true,
 		force:     mirrorOpts.force,
 	}
+	dlReport = newDownloadReport()
 	if follow {
 		dlOpts.refs = core.NewRefCollector()
 	}
@@ -133,6 +132,12 @@ func handleMirrorCommand(urlArg string) error {
 	parsed, err := utils.ParseFeishuUrl(url)
 	if err != nil {
 		return err
+	}
+
+	// --dry-run：轻量遍历远端节点列表（不拉块内容、不下载素材），对照本地文件
+	// 列出将同步/将清理的内容后直接返回，不写任何文件
+	if mirrorOpts.dryRun {
+		return handleMirrorDryRun(ctx, client, outputDir, url, parsed, follow)
 	}
 
 	seen := newTokenSet()
@@ -194,13 +199,14 @@ func handleMirrorCommand(urlArg string) error {
 		return err
 	}
 
-	// 清理远端已不存在的本地文档；部分失败时跳过（远端列表可能不完整，避免误删）
+	// 清理远端已不存在的本地文档；部分失败时跳过（远端列表可能不完整，避免误删）。
+	// 部分失败经 dlReport.finalize 给出部分成功退出码（3），全失败保留原错误（exit 1）。
 	if syncErr != nil {
 		log.Printf("警告: 部分内容同步失败，本次跳过陈旧文件清理: %v", syncErr)
-		return syncErr
+		return dlReport.finalize(syncErr)
 	}
 	if mirrorOpts.noPrune {
-		return nil
+		return dlReport.finalize(nil)
 	}
 	removed, err := core.PruneStaleMirrorFiles(outputDir, seen.Has)
 	if err != nil {
@@ -210,7 +216,7 @@ func handleMirrorCommand(urlArg string) error {
 		fmt.Printf("远端已删除，移入回收站: %s\n", path)
 	}
 	fmt.Printf("镜像同步完成: %s\n", outputDir)
-	return nil
+	return dlReport.finalize(nil)
 }
 
 // mirrorWikiSpace 镜像整个知识库空间到 dlOpts.outputDir（目录本身即镜像根）。

@@ -160,12 +160,13 @@ func TestValidateSearchArgs(t *testing.T) {
 		opts searchOptions
 		msg  string
 	}{
-		{"缺 query", nil, valid, "Please specify the search query"},
-		{"query 超长", []string{string(make([]rune, 51))}, valid, "at most 50 characters"},
-		{"folder+space 互斥", []string{"q"}, searchOptions{folder: "f", space: "s", pageSize: 20}, "--folder cannot be used with --space"},
-		{"page-size 越界", []string{"q"}, searchOptions{pageSize: 0}, "between 1 and 20"},
-		{"doc-types 非法", []string{"q"}, searchOptions{docTypes: "bogus", pageSize: 20}, "unknown value"},
-		{"sort 非法", []string{"q"}, searchOptions{sort: "bogus", pageSize: 20}, "--sort must be one of"},
+		{"缺 query", nil, valid, "请指定搜索关键词"},
+		{"多余参数", []string{"a", "b"}, valid, "search 只接受一个关键词参数"},
+		{"query 超长", []string{string(make([]rune, 51))}, valid, "搜索关键词最多 50 个字符"},
+		{"folder+space 互斥", []string{"q"}, searchOptions{folder: "f", space: "s", pageSize: 20}, "--folder 不能与 --space 同时使用"},
+		{"page-size 越界", []string{"q"}, searchOptions{pageSize: 0}, "--page-size 必须在 1-20 之间"},
+		{"doc-types 非法", []string{"q"}, searchOptions{docTypes: "bogus", pageSize: 20}, "--doc-types 含未知取值"},
+		{"sort 非法", []string{"q"}, searchOptions{sort: "bogus", pageSize: 20}, "--sort 必须是以下之一"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

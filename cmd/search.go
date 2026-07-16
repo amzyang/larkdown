@@ -22,6 +22,7 @@ type searchOptions struct {
 	onlyTitle bool
 	asJSON    bool
 	pageSize  int64
+	limit     int64 // >0 时自动翻页聚合至多 limit 条（0 = 单页行为）
 }
 
 var searchOpts = searchOptions{}
@@ -33,11 +34,7 @@ var searchDocTypes = []string{"doc", "sheet", "bitable", "mindnote", "file", "wi
 var searchSortTypes = []string{"default", "edit_time", "edit_time_asc", "open_time", "create_time"}
 
 func handleSearchCommand(ctx context.Context, query string) error {
-	configPath, err := core.GetConfigFilePath()
-	if err != nil {
-		return err
-	}
-	config, err := core.ReadConfigFromFile(configPath)
+	config, configPath, err := loadConfig()
 	if err != nil {
 		return err
 	}
@@ -49,12 +46,10 @@ func handleSearchCommand(ctx context.Context, query string) error {
 		return exitWithMessage("search 仅支持用户身份（user_access_token），不支持 --as bot；请先执行 larkdown auth login", 1)
 	}
 
-	resp, err := client.SearchDocWiki(ctx, buildSearchRequest(query, searchOpts))
+	page, err := fetchSearchResults(ctx, client, query, searchOpts)
 	if err != nil {
-		return fmt.Errorf("搜索失败: %w", err)
+		return err
 	}
-
-	page := newSearchResultPage(resp)
 	if searchOpts.asJSON {
 		printJSON(os.Stdout, page)
 		return nil
@@ -63,28 +58,64 @@ func handleSearchCommand(ctx context.Context, query string) error {
 	return nil
 }
 
+// fetchSearchResults 执行搜索：--limit > 0 时按 --page-size 自动翻页聚合至多 limit 条，
+// 否则保持单页行为。聚合页的 HasMore/PageToken 取自最后一页（供继续翻页）。
+func fetchSearchResults(ctx context.Context, client *core.Client, query string, opts searchOptions) (searchResultPage, error) {
+	resp, err := client.SearchDocWiki(ctx, buildSearchRequest(query, opts))
+	if err != nil {
+		return searchResultPage{}, fmt.Errorf("搜索失败: %w", err)
+	}
+	page := newSearchResultPage(resp)
+	if opts.limit <= 0 {
+		return page, nil
+	}
+
+	for int64(len(page.Results)) < opts.limit && page.HasMore && page.PageToken != "" {
+		opts.pageToken = page.PageToken
+		resp, err := client.SearchDocWiki(ctx, buildSearchRequest(query, opts))
+		if err != nil {
+			return searchResultPage{}, fmt.Errorf("搜索翻页失败（已获取 %d 条）: %w", len(page.Results), err)
+		}
+		next := newSearchResultPage(resp)
+		page.Results = append(page.Results, next.Results...)
+		page.HasMore, page.PageToken = next.HasMore, next.PageToken
+	}
+	if int64(len(page.Results)) > opts.limit {
+		page.Results = page.Results[:opts.limit]
+		page.HasMore = true // 截断意味着还有未展示结果，但截断处无 page_token 可续
+		page.PageToken = ""
+	}
+	return page, nil
+}
+
 // validateSearchArgs 校验位置参数与 flag 组合；全部在触网前完成。
 func validateSearchArgs(args []string, opts searchOptions) error {
 	if len(args) == 0 {
-		return exitWithMessage("Please specify the search query", 1)
+		return exitWithMessage("请指定搜索关键词", 1)
+	}
+	if len(args) > 1 {
+		return exitWithMessage("search 只接受一个关键词参数（多词查询请用引号包裹）", 1)
 	}
 	if utf8.RuneCountInString(args[0]) > 50 {
-		return exitWithMessage("query must be at most 50 characters", 1)
+		return exitWithMessage("搜索关键词最多 50 个字符", 1)
 	}
 	if opts.folder != "" && opts.space != "" {
-		return exitWithMessage("--folder cannot be used with --space", 1)
+		return exitWithMessage("--folder 不能与 --space 同时使用", 1)
 	}
 	if opts.pageSize < 1 || opts.pageSize > 20 {
-		return exitWithMessage("--page-size must be between 1 and 20", 1)
+		return exitWithMessage("--page-size 必须在 1-20 之间", 1)
+	}
+	if opts.limit < 0 || opts.limit > 1000 {
+		return exitWithMessage("--limit 必须在 1-1000 之间", 1)
 	}
 	for _, dt := range splitCSV(opts.docTypes) {
 		if !containsFold(searchDocTypes, dt) {
-			return exitWithMessage(fmt.Sprintf("--doc-types contains unknown value %q (allowed: %s)",
+			return exitWithMessage(fmt.Sprintf("--doc-types 含未知取值 %q（可选: %s）",
 				dt, strings.Join(searchDocTypes, ", ")), 1)
 		}
 	}
 	if opts.sort != "" && !containsFold(searchSortTypes, opts.sort) {
-		return exitWithMessage(fmt.Sprintf("--sort must be one of: %s", strings.Join(searchSortTypes, ", ")), 1)
+		return exitWithMessage(fmt.Sprintf("--sort 必须是以下之一: %s", strings.Join(searchSortTypes, ", ")), 1)
 	}
 	return nil
 }

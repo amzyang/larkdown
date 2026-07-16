@@ -24,7 +24,7 @@ func runFollowPhase(ctx context.Context, client *core.Client, outputDir string,
 		return 0, 0
 	}
 	refsDir := filepath.Join(outputDir, refsDirName)
-	fmt.Printf("follow: 发现 %d 篇被引用文档，下载到 %s（深度 %d）\n", len(initial), refsDir, depth)
+	fmt.Fprintf(dlProgress, "follow: 发现 %d 篇被引用文档，下载到 %s（深度 %d）\n", len(initial), refsDir, depth)
 
 	succeeded, failed := core.FollowRefs(initial, core.FollowOptions{
 		Depth:   depth,
@@ -54,6 +54,9 @@ func runFollowPhase(ctx context.Context, client *core.Client, outputDir string,
 		},
 		Logf: log.Printf,
 	})
-	fmt.Printf("follow: 已下载 %d 篇引用文档到 %s（失败 %d 篇）\n", succeeded, refsDir, failed)
+	fmt.Fprintf(dlProgress, "follow: 已下载 %d 篇引用文档到 %s（失败 %d 篇）\n", succeeded, refsDir, failed)
+	if failed > 0 {
+		dlReport.AddFailure("follow", fmt.Errorf("%d 篇引用文档下载失败", failed))
+	}
 	return succeeded, failed
 }

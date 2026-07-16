@@ -20,6 +20,8 @@ import (
 // Uploader Wiki 上传器
 type Uploader struct {
 	client *Client
+	// out 是进度输出通道（默认 os.Stdout）；upload --json 时改道 stderr，保持 stdout 纯 JSON。
+	out io.Writer
 	// statePaths 定位画板映射等持久状态的中心 store 目录（默认 os.UserConfigDir()/feishu2md）。
 	statePaths StatePaths
 	// mentionUserNames 当前上传文档的 @人 user-id → 显示名映射，
@@ -45,12 +47,18 @@ func NewUploader(client *Client) (*Uploader, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Uploader{client: client, statePaths: sp}, nil
+	return &Uploader{client: client, statePaths: sp, out: os.Stdout}, nil
 }
+
+// SetOutput 重定向进度输出（upload --json 时传 os.Stderr）。
+func (u *Uploader) SetOutput(w io.Writer) { u.out = w }
+
+// logf 输出上传进度到 u.out。
+func (u *Uploader) logf(format string, args ...any) { fmt.Fprintf(u.out, format, args...) }
 
 // NewUploaderWithPaths 用注入的 StatePaths 构造上传器（测试传临时目录）。
 func NewUploaderWithPaths(client *Client, sp StatePaths) *Uploader {
-	return &Uploader{client: client, statePaths: sp}
+	return &Uploader{client: client, statePaths: sp, out: os.Stdout}
 }
 
 // UploadOptions 上传选项
@@ -198,7 +206,7 @@ func (u *Uploader) createDocument(ctx context.Context, filePath, body string, op
 	spaceID := opts.SpaceID
 	if spaceID == "" {
 		spaceID = "my_library"
-		fmt.Println("使用默认目标：我的文档库")
+		u.logf("使用默认目标：我的文档库\n")
 	}
 
 	title := ExtractTitle(body)
@@ -217,7 +225,7 @@ func (u *Uploader) createDocument(ctx context.Context, filePath, body string, op
 		return nil, err
 	}
 
-	fmt.Printf("已创建 Wiki 节点: %s (node_token=%s, document_id=%s)\n",
+	u.logf("已创建 Wiki 节点: %s (node_token=%s, document_id=%s)\n",
 		title, node.NodeToken, node.ObjToken)
 
 	wikiURL := fmt.Sprintf("https://%s/wiki/%s", u.client.Domain(), node.NodeToken)
@@ -246,7 +254,7 @@ func (u *Uploader) updateDocument(ctx context.Context, filePath string, fm *Fron
 		return nil, err
 	}
 
-	fmt.Printf("更新文档: %s (document_id=%s)\n", filepath.Base(filePath), documentID)
+	u.logf("更新文档: %s (document_id=%s)\n", filepath.Base(filePath), documentID)
 
 	// dryrun 时跳过文件写入，保持纯只读
 	if !opts.DryRun {
@@ -310,7 +318,7 @@ func (u *Uploader) fullUpdate(ctx context.Context, documentID, filePath, body st
 		if err := u.deleteRootIndices(ctx, documentID, deleteIndices); err != nil {
 			return fmt.Errorf("删除原有内容失败: %w", err)
 		}
-		fmt.Printf("已删除 %d 个原有块（保留 %d 个实体）\n", len(deleteIndices), len(rootBlocks)-len(deleteIndices))
+		u.logf("已删除 %d 个原有块（保留 %d 个实体）\n", len(deleteIndices), len(rootBlocks)-len(deleteIndices))
 	}
 
 	// 重建内容（writeResult 内已跳过 round-trip 实体创建，不会重复）
@@ -351,7 +359,7 @@ func (u *Uploader) reconcileEntityPositions(ctx context.Context, documentID stri
 	// 重新拉取远程根级块（含真实 block_id 与当前顺序）
 	blocks, err := u.client.GetDocxBlockChildren(ctx, documentID)
 	if err != nil {
-		fmt.Printf("警告: 校正实体位置失败（读取远程块出错）：%v；实体已保留，位置可能不对齐\n", err)
+		u.logf("警告: 校正实体位置失败（读取远程块出错）：%v；实体已保留，位置可能不对齐\n", err)
 		return
 	}
 	blockMap := make(map[string]*lark.DocxBlock, len(blocks))
@@ -366,12 +374,12 @@ func (u *Uploader) reconcileEntityPositions(ctx context.Context, documentID stri
 	moves := planEntityMoves(current, blockMap, localResult, documentID)
 	for _, m := range moves {
 		if err := u.client.BlockMoveAfter(ctx, documentID, m.anchorID, []string{m.remoteID}); err != nil {
-			fmt.Printf("警告: 无法自动校正实体位置（token=%s）：%v；实体已保留，请手动调整\n", m.token, err)
+			u.logf("警告: 无法自动校正实体位置（token=%s）：%v；实体已保留，请手动调整\n", m.token, err)
 			return // best-effort：首次失败即停止，避免刷屏
 		}
 	}
 	if len(moves) > 0 {
-		fmt.Printf("已校正 %d 个实体的位置\n", len(moves))
+		u.logf("已校正 %d 个实体的位置\n", len(moves))
 	}
 }
 
@@ -477,7 +485,7 @@ func (u *Uploader) incrementalUpdate(ctx context.Context, documentID, filePath, 
 	// 3. 快速路径：远程为空 → 直接全量写入
 	if len(rootBlocks) == 0 {
 		if dryRun {
-			fmt.Printf("[dryrun] 远程文档为空，将全量写入 %d 个本地块\n", len(localResult.TopBlocks))
+			u.logf("[dryrun] 远程文档为空，将全量写入 %d 个本地块\n", len(localResult.TopBlocks))
 			return nil
 		}
 		if strings.TrimSpace(bodyWithoutTitle) != "" {
@@ -493,14 +501,14 @@ func (u *Uploader) incrementalUpdate(ctx context.Context, documentID, filePath, 
 	// 快速路径：本地为空 → 删除所有远程块
 	if len(localResult.TopBlocks) == 0 {
 		if dryRun {
-			fmt.Printf("[dryrun] 本地内容为空，将删除全部 %d 个远程块\n", len(rootBlocks))
+			u.logf("[dryrun] 本地内容为空，将删除全部 %d 个远程块\n", len(rootBlocks))
 			return nil
 		}
 		_, err := u.client.BatchDeleteDocxBlocks(ctx, documentID, 0, int64(len(rootBlocks)))
 		if err != nil {
 			return fmt.Errorf("删除原有内容失败: %w", err)
 		}
-		fmt.Printf("已删除 %d 个原有块\n", len(rootBlocks))
+		u.logf("已删除 %d 个原有块\n", len(rootBlocks))
 		return nil
 	}
 
@@ -552,13 +560,13 @@ func (u *Uploader) incrementalUpdate(ctx context.Context, documentID, filePath, 
 
 	// 7. 快速路径：签名完全一致且无实体内容变更 → 跳过更新
 	if signaturesEqual(remoteSigs, localSigs) && len(imageReplaces) == 0 && len(fileReplaces) == 0 {
-		fmt.Println("文档内容未变化，跳过更新")
+		u.logf("文档内容未变化，跳过更新\n")
 		return nil
 	}
 
 	// 8. 变更区域 → 收集 replace/batch_update 操作
 	regions := GroupChangeRegions(ops)
-	fmt.Printf("检测到 %d 个变更区域\n", len(regions))
+	u.logf("检测到 %d 个变更区域\n", len(regions))
 
 	for _, region := range regions {
 		pairedOps := PairBlocks(region, rootBlocks, localResult, docsAIEnabled)
@@ -585,7 +593,7 @@ func (u *Uploader) incrementalUpdate(ctx context.Context, documentID, filePath, 
 						localType:  localBlock.BlockType,
 					})
 				} else {
-					fmt.Printf("警告: 无法生成 docs_ai 替换内容 (block=%s, type=%d)，跳过\n",
+					u.logf("警告: 无法生成 docs_ai 替换内容 (block=%s, type=%d)，跳过\n",
 						remoteBlock.BlockID, localBlock.BlockType)
 					docsAIFailures++
 				}
@@ -607,7 +615,7 @@ func (u *Uploader) incrementalUpdate(ctx context.Context, documentID, filePath, 
 		}
 	}
 	if len(batchRequests) > 0 {
-		fmt.Printf("已批量更新 %d 个块\n", len(batchRequests))
+		u.logf("已批量更新 %d 个块\n", len(batchRequests))
 	}
 
 	// docs_ai block_replace 原地替换（跨类型/容器块）。在删除+插入之前执行：整块替换不改根块数量、
@@ -615,14 +623,14 @@ func (u *Uploader) incrementalUpdate(ctx context.Context, documentID, filePath, 
 	docsAIDone := 0
 	for _, t := range docsAIReplaces {
 		if err := u.client.BlockReplace(ctx, documentID, t.blockID, t.content, "markdown"); err != nil {
-			fmt.Printf("警告: docs_ai 替换失败 (block=%s): %v，保留原块\n", t.blockID, err)
+			u.logf("警告: docs_ai 替换失败 (block=%s): %v，保留原块\n", t.blockID, err)
 			docsAIFailures++
 			continue
 		}
 		docsAIDone++
 	}
 	if docsAIDone > 0 {
-		fmt.Printf("已原地替换 %d 个块 (docs_ai block_replace)\n", docsAIDone)
+		u.logf("已原地替换 %d 个块 (docs_ai block_replace)\n", docsAIDone)
 	}
 
 	// 上传图片/文件素材并 batch_update replace_image/replace_file
@@ -1083,19 +1091,19 @@ func (u *Uploader) applyMediaReplaces(ctx context.Context, documentID, filePath 
 		for _, task := range imageReplaces {
 			imgData, imgName, err := resolveImageData(task.imgPath, mdDir)
 			if err != nil {
-				fmt.Printf("警告: 读取图片文件失败 %s: %v，跳过\n", task.imgPath, err)
+				u.logf("警告: 读取图片文件失败 %s: %v，跳过\n", task.imgPath, err)
 				continue
 			}
 			fileToken, err := u.uploadImageMedia(ctx, documentID, task.blockID, imgName, imgData)
 			if err != nil {
-				fmt.Printf("警告: 上传图片失败 %s: %v，跳过\n", task.imgPath, err)
+				u.logf("警告: 上传图片失败 %s: %v，跳过\n", task.imgPath, err)
 				continue
 			}
 			reqs = append(reqs, &lark.BatchUpdateDocxDocumentBlockReqRequest{
 				BlockID:      &task.blockID,
 				ReplaceImage: &lark.BatchUpdateDocxDocumentBlockReqRequestReplaceImage{Token: fileToken},
 			})
-			fmt.Printf("已更新图片: %s → %s\n", imgName, fileToken)
+			u.logf("已更新图片: %s → %s\n", imgName, fileToken)
 			u.recordMediaMapping(task.imgPath, fileToken, imgData, false)
 		}
 		for i := 0; i < len(reqs); i += 200 {
@@ -1111,19 +1119,19 @@ func (u *Uploader) applyMediaReplaces(ctx context.Context, documentID, filePath 
 		for _, task := range fileReplaces {
 			fileData, fileName, err := resolveImageData(task.filePath, mdDir)
 			if err != nil {
-				fmt.Printf("警告: 读取文件失败 %s: %v，跳过\n", task.filePath, err)
+				u.logf("警告: 读取文件失败 %s: %v，跳过\n", task.filePath, err)
 				continue
 			}
 			fileToken, err := u.uploadFileMedia(ctx, documentID, task.blockID, fileName, fileData)
 			if err != nil {
-				fmt.Printf("警告: 上传文件失败 %s: %v，跳过\n", task.filePath, err)
+				u.logf("警告: 上传文件失败 %s: %v，跳过\n", task.filePath, err)
 				continue
 			}
 			reqs = append(reqs, &lark.BatchUpdateDocxDocumentBlockReqRequest{
 				BlockID:     &task.blockID,
 				ReplaceFile: &lark.BatchUpdateDocxDocumentBlockReqRequestReplaceFile{Token: fileToken},
 			})
-			fmt.Printf("已更新文件: %s → %s\n", fileName, fileToken)
+			u.logf("已更新文件: %s → %s\n", fileName, fileToken)
 			u.recordMediaMapping(task.filePath, fileToken, fileData, true)
 		}
 		for i := 0; i < len(reqs); i += 200 {
@@ -1176,7 +1184,7 @@ func (u *Uploader) replacePreservedEntities(ctx context.Context, documentID, fil
 		}
 	}
 	if err := u.applyMediaReplaces(ctx, documentID, filePath, imageReplaces, fileReplaces); err != nil {
-		fmt.Printf("警告: 替换已变更实体失败: %v\n", err)
+		u.logf("警告: 替换已变更实体失败: %v\n", err)
 	}
 }
 
@@ -1304,7 +1312,7 @@ func (u *Uploader) batchDeleteBlocks(ctx context.Context, documentID string, blo
 	if err := u.deleteRootIndices(ctx, documentID, indices); err != nil {
 		return err
 	}
-	fmt.Printf("已删除 %d 个块\n", len(blockIDs))
+	u.logf("已删除 %d 个块\n", len(blockIDs))
 	return nil
 }
 
@@ -1394,7 +1402,7 @@ func (u *Uploader) insertBlocks(
 		// 跳过避免重复，位置由 reconcileEntityPositions 校正。token 已解析说明远程存在该实体；
 		// 白板若被带外删除则无法恢复（token 只读），图片/文件被带外删除时此处跳过、不会重建。
 		if isRoundTripEntity(localResult.TopBlocks[idx]) {
-			fmt.Printf("跳过 round-trip 实体（token=%s）：复用已保留远程块\n",
+			u.logf("跳过 round-trip 实体（token=%s）：复用已保留远程块\n",
 				localRoundTripToken(localResult.TopBlocks[idx]))
 			continue
 		}
@@ -1438,13 +1446,13 @@ func (u *Uploader) insertBlocks(
 			imgPath := localResult.ImagePaths[i]
 			imgData, imgName, err := resolveImageData(imgPath, mdDir)
 			if err != nil {
-				fmt.Printf("警告: 读取图片文件失败 %s: %v，跳过\n", imgPath, err)
+				u.logf("警告: 读取图片文件失败 %s: %v，跳过\n", imgPath, err)
 				continue
 			}
 
 			fileToken, err := u.uploadImageMedia(ctx, documentID, blockID, imgName, imgData)
 			if err != nil {
-				fmt.Printf("警告: 上传图片失败 %s: %v，跳过\n", imgPath, err)
+				u.logf("警告: 上传图片失败 %s: %v，跳过\n", imgPath, err)
 				continue
 			}
 
@@ -1452,7 +1460,7 @@ func (u *Uploader) insertBlocks(
 				BlockID:      &blockID,
 				ReplaceImage: &lark.BatchUpdateDocxDocumentBlockReqRequestReplaceImage{Token: fileToken},
 			})
-			fmt.Printf("已上传图片: %s → %s\n", filepath.Base(imgPath), fileToken)
+			u.logf("已上传图片: %s → %s\n", filepath.Base(imgPath), fileToken)
 			u.recordMediaMapping(imgPath, fileToken, imgData, false)
 		}
 		for i := 0; i < len(imgBatchRequests); i += 200 {
@@ -1475,7 +1483,7 @@ func (u *Uploader) insertBlocks(
 		u.fillBoards(ctx, localResult, allInsertedBlocks, allFlatToOrigIndex)
 	}
 
-	fmt.Printf("已插入 %d 个块 (位置=%d)\n", len(localIndices), insertIndex)
+	u.logf("已插入 %d 个块 (位置=%d)\n", len(localIndices), insertIndex)
 	return nil
 }
 
@@ -1527,7 +1535,7 @@ func (u *Uploader) writeResult(ctx context.Context, documentID, filePath string,
 		// 白板 token 只读无法新建；图片/文件虽可新建，但保留远程块可避免素材重传/孤儿 media。
 		// 位置由 reconcileEntityPositions 校正；内容变更由 replacePreservedEntities 处理。
 		if isRoundTripEntity(result.TopBlocks[i]) {
-			fmt.Printf("跳过 round-trip 实体创建（token=%s）：复用已保留远程块\n", localRoundTripToken(result.TopBlocks[i]))
+			u.logf("跳过 round-trip 实体创建（token=%s）：复用已保留远程块\n", localRoundTripToken(result.TopBlocks[i]))
 			continue
 		}
 		if dg, ok := dgByIndex[i]; ok {
@@ -1570,7 +1578,7 @@ func (u *Uploader) writeResult(ctx context.Context, documentID, filePath string,
 		u.fillBoards(ctx, result, allInsertedBlocks, allFlatToOrigIndex)
 	}
 
-	fmt.Printf("已插入 %d 个块\n", len(result.TopBlocks))
+	u.logf("已插入 %d 个块\n", len(result.TopBlocks))
 	return nil
 }
 
@@ -1696,13 +1704,13 @@ func (u *Uploader) uploadAndReplace(
 		path := paths[i]
 		data, name, err := resolveImageData(path, mdDir)
 		if err != nil {
-			fmt.Printf("警告: 读取%s失败 %s: %v，跳过\n", typeName, path, err)
+			u.logf("警告: 读取%s失败 %s: %v，跳过\n", typeName, path, err)
 			continue
 		}
 
 		fileToken, err := uploadFn(ctx, documentID, blockID, name, data)
 		if err != nil {
-			fmt.Printf("警告: 上传%s失败 %s: %v，跳过\n", typeName, path, err)
+			u.logf("警告: 上传%s失败 %s: %v，跳过\n", typeName, path, err)
 			continue
 		}
 
@@ -1710,7 +1718,7 @@ func (u *Uploader) uploadAndReplace(
 		if record != nil {
 			record(path, fileToken, data)
 		}
-		fmt.Printf("已上传%s: %s → %s\n", typeName, filepath.Base(path), fileToken)
+		u.logf("已上传%s: %s → %s\n", typeName, filepath.Base(path), fileToken)
 	}
 
 	for i := 0; i < len(batchRequests); i += 200 {
@@ -1750,7 +1758,7 @@ func (u *Uploader) uploadMedia(
 		}
 		blockID, ok := origToBlockID[idx]
 		if !ok {
-			fmt.Printf("警告: %s块 %d 未找到对应的 block_id，跳过\n", typeName, idx)
+			u.logf("警告: %s块 %d 未找到对应的 block_id，跳过\n", typeName, idx)
 			continue
 		}
 		blockIDs = append(blockIDs, blockID)
@@ -1826,16 +1834,16 @@ func (u *Uploader) fillBoards(ctx context.Context, result *ConvertResult, insert
 	for i, boardIdx := range result.BoardIndices {
 		boardToken, ok := origToBoardToken[boardIdx]
 		if !ok {
-			fmt.Printf("警告: Board 块 %d 未找到对应的 board token，跳过\n", boardIdx)
+			u.logf("警告: Board 块 %d 未找到对应的 board token，跳过\n", boardIdx)
 			continue
 		}
 
 		if err := u.client.CreateWhiteboardPlantUML(ctx, boardToken, result.BoardCodes[i]); err != nil {
-			fmt.Printf("警告: 填充 PlantUML 失败 (board_token=%s): %v，跳过\n", boardToken, err)
+			u.logf("警告: 填充 PlantUML 失败 (board_token=%s): %v，跳过\n", boardToken, err)
 			continue
 		}
 
-		fmt.Printf("已填充 PlantUML 画板: %s\n", boardToken)
+		u.logf("已填充 PlantUML 画板: %s\n", boardToken)
 		// 记录「源 hash → token」映射，供末尾写入画板映射记录（源未变时下次跳过重建）
 		u.pendingBoardMappings = append(u.pendingBoardMappings, BoardMapping{
 			SourceHash: canonicalBoardSourceHash(result.BoardCodes[i]),
@@ -1856,12 +1864,12 @@ func (u *Uploader) applyBoardTokenMappings(localResult *ConvertResult, documentI
 	}
 	if manifest == nil {
 		if n := countUntokenedBoards(localResult); n > 0 {
-			fmt.Printf("首次上传/无画板映射：%d 个画板将创建并建立映射，源未变则后续复用\n", n)
+			u.logf("首次上传/无画板映射：%d 个画板将创建并建立映射，源未变则后续复用\n", n)
 		}
 		return
 	}
 	if n := applyBoardMappings(localResult, documentID, manifest, remoteBoardTokens(rootBlocks)); n > 0 {
-		fmt.Printf("复用 %d 个已有画板（PlantUML 源未变）\n", n)
+		u.logf("复用 %d 个已有画板（PlantUML 源未变）\n", n)
 	}
 }
 
@@ -1879,7 +1887,7 @@ func (u *Uploader) persistBoardMappings(documentID string) {
 		manifest.upsert(documentID, m.SourceHash, m.Token)
 	}
 	if err := WriteBoardManifest(u.statePaths, documentID, manifest); err != nil {
-		fmt.Printf("警告: 写入画板映射记录失败: %v\n", err)
+		u.logf("警告: 写入画板映射记录失败: %v\n", err)
 	}
 }
 
@@ -1896,14 +1904,14 @@ func (u *Uploader) applyMediaTokenMappings(localResult *ConvertResult, documentI
 	}
 	if manifest == nil {
 		if n := countUntokenedMedia(localResult); n > 0 {
-			fmt.Printf("首次上传/无媒体映射：%d 个素材将上传并建立映射，后续内容未变则复用\n", n)
+			u.logf("首次上传/无媒体映射：%d 个素材将上传并建立映射，后续内容未变则复用\n", n)
 		}
 		return
 	}
 	n, baseline := applyMediaPathMappings(localResult, documentID, manifest, remoteEntityTokens(rootBlocks, blockMap))
 	u.mediaBaselineByToken = baseline
 	if n > 0 {
-		fmt.Printf("复用 %d 个已有素材（内容未变则跳过重传）\n", n)
+		u.logf("复用 %d 个已有素材（内容未变则跳过重传）\n", n)
 	}
 }
 
@@ -1949,7 +1957,7 @@ func (u *Uploader) persistMediaMappings(documentID string) {
 		manifest.upsert(documentID, m.Path, m.Token, m.MD5, m.IsFile)
 	}
 	if err := WriteMediaManifest(u.statePaths, documentID, manifest); err != nil {
-		fmt.Printf("警告: 写入媒体映射记录失败: %v\n", err)
+		u.logf("警告: 写入媒体映射记录失败: %v\n", err)
 	}
 }
 
@@ -1987,7 +1995,7 @@ func (u *Uploader) mergeTableCells(ctx context.Context, documentID string, dg *D
 	}
 	for _, region := range dg.MergeRegions {
 		if err := u.client.MergeTableCells(ctx, documentID, tableBlockID, region); err != nil {
-			fmt.Printf("警告: 合并表格单元格失败 (block=%s, rows=%d-%d, cols=%d-%d): %v\n",
+			u.logf("警告: 合并表格单元格失败 (block=%s, rows=%d-%d, cols=%d-%d): %v\n",
 				tableBlockID, region.RowStartIndex, region.RowEndIndex,
 				region.ColumnStartIndex, region.ColumnEndIndex, err)
 		}
@@ -2028,7 +2036,7 @@ func (u *Uploader) uploadDescendantImages(ctx context.Context, documentID, fileP
 		"容器图片",
 		nil,
 	); err != nil {
-		fmt.Printf("警告: 批量替换容器图片失败: %v\n", err)
+		u.logf("警告: 批量替换容器图片失败: %v\n", err)
 	}
 }
 
@@ -2058,6 +2066,6 @@ func (u *Uploader) writeBackFile(filePath string, fm *FrontMatter, body string) 
 	if err := os.WriteFile(filePath, []byte(newContent), 0o644); err != nil {
 		return fmt.Errorf("写回文件失败: %w", err)
 	}
-	fmt.Printf("已更新 frontmatter: %s\n", filePath)
+	u.logf("已更新 frontmatter: %s\n", filePath)
 	return nil
 }

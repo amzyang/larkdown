@@ -1,10 +1,13 @@
 package main
 
 import (
+	"io"
+	"path/filepath"
 	"testing"
 
 	"github.com/amzyang/larkdown/core"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestMaskSecret(t *testing.T) {
@@ -31,4 +34,75 @@ func TestMaskConfigForDisplay(t *testing.T) {
 	assert.Equal(t, "supersecretvalue", config.Feishu.AppSecret)
 	assert.Equal(t, "u-verylongusertoken", config.Feishu.UserAccessToken)
 	assert.Equal(t, "r-verylongrefreshtoken", config.Feishu.RefreshToken)
+}
+
+// TestConfigGetSetValue 锁 config get/set 的键集合与值校验契约。
+func TestConfigGetSetValue(t *testing.T) {
+	config := core.NewConfig("cli_a", "secret_12345678")
+
+	t.Run("get 已知键", func(t *testing.T) {
+		v, err := configGetValue(config, "image_dir")
+		require.NoError(t, err)
+		assert.Equal(t, "static", v)
+		v, err = configGetValue(config, "title_as_filename")
+		require.NoError(t, err)
+		assert.Equal(t, "true", v)
+	})
+
+	t.Run("get secret 脱敏", func(t *testing.T) {
+		v, err := configGetValue(config, "app_secret")
+		require.NoError(t, err)
+		assert.Equal(t, "****5678", v)
+	})
+
+	t.Run("get 未知键", func(t *testing.T) {
+		_, err := configGetValue(config, "bogus")
+		var ee *exitError
+		require.ErrorAs(t, err, &ee)
+		assert.Contains(t, ee.msg, "未知配置键")
+	})
+
+	t.Run("set 布尔键", func(t *testing.T) {
+		require.NoError(t, configSetValue(config, "skip_img_download", "true"))
+		assert.True(t, config.Output.SkipImgDownload)
+		err := configSetValue(config, "skip_img_download", "bogus")
+		var ee *exitError
+		require.ErrorAs(t, err, &ee)
+		assert.Contains(t, ee.msg, "需要布尔值")
+	})
+
+	t.Run("set diff_style 校验 chroma 样式", func(t *testing.T) {
+		require.NoError(t, configSetValue(config, "diff_style", "github"))
+		assert.Equal(t, "github", config.Output.DiffStyle)
+		err := configSetValue(config, "diff_style", "not-a-style")
+		var ee *exitError
+		require.ErrorAs(t, err, &ee)
+		assert.Contains(t, ee.msg, "chroma 样式名")
+	})
+
+	t.Run("set 未知键", func(t *testing.T) {
+		err := configSetValue(config, "bogus", "x")
+		var ee *exitError
+		require.ErrorAs(t, err, &ee)
+		assert.Contains(t, ee.msg, "未知配置键")
+	})
+}
+
+// TestConfigGetMissingFile 锁 config get 对缺失配置文件的处理：
+// 友好 exitError（用户可自助，不上报 Sentry），而非裸 PathError。
+func TestConfigGetMissingFile(t *testing.T) {
+	t.Setenv("LARKDOWN_CONFIG", filepath.Join(t.TempDir(), "none.json"))
+	t.Setenv("DO_NOT_TRACK", "1")
+	root := newRootCommand()
+	root.SetOut(io.Discard)
+	root.SetErr(io.Discard)
+	root.SetArgs([]string{"config", "get"})
+
+	err := root.Execute()
+
+	var ee *exitError
+	require.ErrorAs(t, err, &ee)
+	assert.Equal(t, 1, ee.code)
+	assert.Contains(t, ee.msg, "配置文件不存在")
+	assert.Contains(t, ee.msg, "larkdown config init")
 }
