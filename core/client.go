@@ -271,16 +271,16 @@ func (c *Client) DownloadImage(ctx context.Context, imgToken, outDir string) (st
 		// 复制失败，降级到下载
 	}
 
-	// 2. Cookie 优先：该文档之前已有 cookie 成功
+	// 2. 受限通道优先：该文档之前已触发过受限下载，直接走级联（官方 preview_download 优先，失败再 cookie）
 	if c.shouldPreferCookie(ctx) {
-		data, filename, err := c.cookieFallbackDownloadImage(ctx, imgToken)
+		data, filename, err := c.restrictedFallbackImage(ctx, imgToken)
 		if err == nil {
 			filePath := filepath.Join(outDir, imgToken+"_"+filename)
 			os.MkdirAll(filepath.Dir(filePath), 0o755)
 			os.WriteFile(filePath, data, 0o666)
 			return filePath, nil
 		}
-		// cookie 失败，降级走 API
+		// 受限通道失败，降级走 API
 	}
 
 	// 3. 从 API 下载
@@ -291,11 +291,11 @@ func (c *Client) DownloadImage(ctx context.Context, imgToken, outDir string) (st
 		if !IsPermissionError(err) {
 			return imgToken, err
 		}
-		// 4. Cookie fallback
-		log.Printf("API 权限错误，尝试 cookie 回退: %s", imgToken)
-		data, filename, fallbackErr := c.cookieFallbackDownloadImage(ctx, imgToken)
+		// 4. 受限通道回退（官方 preview_download 优先，失败再 cookie）
+		log.Printf("API 权限错误，尝试受限通道回退: %s", imgToken)
+		data, filename, fallbackErr := c.restrictedFallbackImage(ctx, imgToken)
 		if fallbackErr != nil {
-			log.Printf("cookie 回退失败: %v", fallbackErr)
+			log.Printf("受限通道回退失败: %v", fallbackErr)
 			return imgToken, err // 返回原始 API 错误
 		}
 		c.markCookieFallbackSuccess(ctx)
@@ -342,9 +342,9 @@ func (c *Client) DownloadMedia(ctx context.Context, fileToken, outDir string) (s
 		}
 	}
 
-	// 2. Cookie 优先：该文档之前已有 cookie 成功
+	// 2. 受限通道优先：该文档之前已触发过受限下载，直接走级联（官方 preview_download 优先，失败再 cookie）
 	if c.shouldPreferCookie(ctx) {
-		data, filename, err := c.cookieFallbackDownloadMedia(ctx, fileToken)
+		data, filename, err := c.restrictedFallbackMedia(ctx, fileToken)
 		if err == nil {
 			filePath := filepath.Join(outDir, fileToken+"_"+filename)
 			os.MkdirAll(filepath.Dir(filePath), 0o755)
@@ -361,10 +361,10 @@ func (c *Client) DownloadMedia(ctx context.Context, fileToken, outDir string) (s
 		if !IsPermissionError(err) {
 			return fileToken, err
 		}
-		log.Printf("API 权限错误，尝试 cookie 回退: %s", fileToken)
-		data, filename, fallbackErr := c.cookieFallbackDownloadMedia(ctx, fileToken)
+		log.Printf("API 权限错误，尝试受限通道回退: %s", fileToken)
+		data, filename, fallbackErr := c.restrictedFallbackMedia(ctx, fileToken)
 		if fallbackErr != nil {
-			log.Printf("cookie 回退失败: %v", fallbackErr)
+			log.Printf("受限通道回退失败: %v", fallbackErr)
 			return fileToken, err
 		}
 		c.markCookieFallbackSuccess(ctx)
@@ -406,9 +406,9 @@ func (c *Client) DownloadMediaRaw(ctx context.Context, fileToken string) (string
 		}
 	}
 
-	// 2. Cookie 优先：该文档之前已有 cookie 成功
+	// 2. 受限通道优先：该文档之前已触发过受限下载，直接走级联（官方 preview_download 优先，失败再 cookie）
 	if c.shouldPreferCookie(ctx) {
-		data, filename, err := c.cookieFallbackDownloadMedia(ctx, fileToken)
+		data, filename, err := c.restrictedFallbackMedia(ctx, fileToken)
 		if err == nil {
 			return fileToken + "_" + filename, data, nil
 		}
@@ -422,10 +422,10 @@ func (c *Client) DownloadMediaRaw(ctx context.Context, fileToken string) (string
 		if !IsPermissionError(err) {
 			return "", nil, err
 		}
-		log.Printf("API 权限错误，尝试 cookie 回退: %s", fileToken)
-		data, filename, fallbackErr := c.cookieFallbackDownloadMedia(ctx, fileToken)
+		log.Printf("API 权限错误，尝试受限通道回退: %s", fileToken)
+		data, filename, fallbackErr := c.restrictedFallbackMedia(ctx, fileToken)
 		if fallbackErr != nil {
-			log.Printf("cookie 回退失败: %v", fallbackErr)
+			log.Printf("受限通道回退失败: %v", fallbackErr)
 			return "", nil, err
 		}
 		c.markCookieFallbackSuccess(ctx)
@@ -453,9 +453,9 @@ func (c *Client) DownloadImageRaw(ctx context.Context, imgToken, imgDir string) 
 		// 读取失败，降级到下载
 	}
 
-	// 2. Cookie 优先：该文档之前已有 cookie 成功
+	// 2. 受限通道优先：该文档之前已触发过受限下载，直接走级联（官方 preview_download 优先，失败再 cookie）
 	if c.shouldPreferCookie(ctx) {
-		data, filename, err := c.cookieFallbackDownloadImage(ctx, imgToken)
+		data, filename, err := c.restrictedFallbackImage(ctx, imgToken)
 		if err == nil {
 			filePath := filepath.Join(imgDir, imgToken+"_"+filename)
 			return filePath, data, nil
@@ -470,10 +470,10 @@ func (c *Client) DownloadImageRaw(ctx context.Context, imgToken, imgDir string) 
 		if !IsPermissionError(err) {
 			return imgToken, nil, err
 		}
-		log.Printf("API 权限错误，尝试 cookie 回退: %s", imgToken)
-		data, filename, fallbackErr := c.cookieFallbackDownloadImage(ctx, imgToken)
+		log.Printf("API 权限错误，尝试受限通道回退: %s", imgToken)
+		data, filename, fallbackErr := c.restrictedFallbackImage(ctx, imgToken)
 		if fallbackErr != nil {
-			log.Printf("cookie 回退失败: %v", fallbackErr)
+			log.Printf("受限通道回退失败: %v", fallbackErr)
 			return imgToken, nil, err
 		}
 		c.markCookieFallbackSuccess(ctx)

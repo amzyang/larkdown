@@ -21,6 +21,10 @@ import (
 const (
 	cookieDomain      = "feishu.cn"
 	fallbackURLFormat = "https://internal-api-drive-stream.feishu.cn/space/api/box/stream/download/preview/%s/?preview_type=16"
+	// previewTypeSourceFile 是官方 drive/v1 preview_download 的 preview_type 取值：源文件
+	// （返回原始字节而非缩略图/渲染预览，故支持任意文件类型）。与上面内部接口 URL 里的
+	// preview_type=16 同值，对齐 lark-cli 的 PreviewType_SOURCE_FILE。
+	previewTypeSourceFile = "16"
 )
 
 // browserUserAgents 按浏览器名称映射 User-Agent（最新版本）
@@ -99,7 +103,7 @@ func prefixURLFromContext(ctx context.Context) string {
 	return ""
 }
 
-// shouldPreferCookie 判断当前文档是否已标记为优先使用 cookie 下载
+// shouldPreferCookie 判断当前文档是否已标记为优先走受限通道回退（跳过必然失败的 API 直连）。
 func (c *Client) shouldPreferCookie(ctx context.Context) bool {
 	if dt := docTokenFromContext(ctx); dt != "" {
 		_, ok := c.cookie.preferFallback.Load(dt)
@@ -108,11 +112,12 @@ func (c *Client) shouldPreferCookie(ctx context.Context) bool {
 	return false
 }
 
-// markCookieFallbackSuccess 标记当前文档的 cookie 回退成功，后续同文档资源优先走 cookie
+// markCookieFallbackSuccess 标记当前文档的受限通道回退成功，后续同文档资源直接走级联
+// （官方 preview_download 优先，失败再 cookie），不再先试注定被权限拦截的 API 直连。
 func (c *Client) markCookieFallbackSuccess(ctx context.Context) {
 	if dt := docTokenFromContext(ctx); dt != "" {
 		if _, loaded := c.cookie.preferFallback.LoadOrStore(dt, struct{}{}); !loaded {
-			log.Printf("文档 %s 后续下载将优先使用 cookie", dt)
+			log.Printf("文档 %s 后续下载将优先走受限通道回退", dt)
 		}
 	}
 }
@@ -314,5 +319,116 @@ func (c *Client) cookieFallbackDownloadMedia(ctx context.Context, token string) 
 		return nil, "", err
 	}
 	_ = c.imageCache.PutFile(token, data, filename)
+	return data, filename, nil
+}
+
+// previewDownloadReq 是 drive/v1 medias/{token}/preview_download 的请求：file_token 走 path
+// （:file_token 占位），preview_type 走 query。
+type previewDownloadReq struct {
+	FileToken   string `path:"file_token" json:"-"`
+	PreviewType string `query:"preview_type" json:"-"`
+}
+
+// mediaStreamData 承载 preview_download 返回的文件流（镜像 SDK downloadDriveMediaResp.Data）。
+type mediaStreamData struct {
+	File     io.Reader
+	Filename string
+}
+
+// previewDownloadResp 镜像 SDK 私有 downloadDriveMediaResp：Code/Msg 供 SDK 的 getCodeMsg 反射出
+// 错误码（权限错误据此浮现为 *lark.Error，不会被静默吞掉），Data 承载文件流；SetReader/SetFilename
+// 命中 SDK 的 readerSetter/filenameSetter 鸭子接口。
+type previewDownloadResp struct {
+	Code int64            `json:"code,omitempty"`
+	Msg  string           `json:"msg,omitempty"`
+	Data *mediaStreamData `json:"data,omitempty"`
+}
+
+func (r *previewDownloadResp) SetReader(file io.Reader) {
+	if r.Data == nil {
+		r.Data = &mediaStreamData{}
+	}
+	r.Data.File = file
+}
+
+func (r *previewDownloadResp) SetFilename(filename string) {
+	if r.Data == nil {
+		r.Data = &mediaStreamData{}
+	}
+	r.Data.Filename = filename
+}
+
+// previewDownloadMedia 走官方 open API GET drive/v1/medias/{token}/preview_download?preview_type=16
+// （SOURCE_FILE，取原始文件而非缩略图/渲染预览，故支持任意文件类型），用 access token 鉴权，
+// 对齐 lark-cli 的 `docs +media-preview`。SDK 无封装，用 RawRequest（自动复用 token 注入 + 限流 +
+// 超时）；响应类型镜像 SDK downloadDriveMediaResp 以便 getCodeMsg 反射出权限错误码。
+//
+// 与 cookieFallbackDownload 的区别：官方端点用 access token 而非偷来的浏览器 cookie，不依赖本地
+// 浏览器登录态。前提是文档「可预览」——飞书预览权限与下载权限分离时，禁下载的文档仍可经此取源文件。
+func (c *Client) previewDownloadMedia(ctx context.Context, token string) ([]byte, string, error) {
+	resp := new(previewDownloadResp)
+	_, err := c.larkClient.RawRequest(ctx, &lark.RawRequestReq{
+		Scope:  "Drive",
+		API:    "PreviewDownloadMedia",
+		Method: "GET",
+		URL:    "https://open.feishu.cn/open-apis/drive/v1/medias/:file_token/preview_download",
+		Body: &previewDownloadReq{
+			FileToken:   token,
+			PreviewType: previewTypeSourceFile,
+		},
+		NeedUserAccessToken:   c.userAccessToken != "",
+		NeedTenantAccessToken: c.userAccessToken == "",
+		MethodOption:          c.userMethodOption(),
+	}, resp)
+	if err != nil {
+		return nil, "", err
+	}
+	if resp.Data == nil || resp.Data.File == nil {
+		return nil, "", fmt.Errorf("preview_download 未返回文件流 (token=%s)", token)
+	}
+	data, err := io.ReadAll(resp.Data.File)
+	if err != nil {
+		return nil, "", err
+	}
+	filename := resp.Data.Filename
+	if filename == "" {
+		filename = token
+	}
+	return data, filename, nil
+}
+
+// restrictedFallbackImage 受限图片下载级联：先官方 preview_download（access token），失败再降级
+// cookie hack。命中官方端点时校验内容确为图片并写缓存；cookie 分支内部已自带校验与缓存。
+func (c *Client) restrictedFallbackImage(ctx context.Context, token string) ([]byte, string, error) {
+	data, filename, err := c.previewDownloadMedia(ctx, token)
+	if err == nil {
+		if ct := http.DetectContentType(data); !isImageContent(ct, data) {
+			err = fmt.Errorf("preview_download 内容不是图片: %s", ct)
+		} else {
+			_ = c.imageCache.Put(token, data, filename)
+			return data, filename, nil
+		}
+	}
+	log.Printf("preview_download 官方回退失败，降级 cookie: %v", err)
+	data, filename, cookieErr := c.cookieFallbackDownloadImage(ctx, token)
+	if cookieErr != nil {
+		return nil, "", fmt.Errorf("preview_download 失败(%v)且 cookie 回退失败: %w", err, cookieErr)
+	}
+	return data, filename, nil
+}
+
+// restrictedFallbackMedia 受限附件下载级联：先官方 preview_download（任意文件类型），失败再降级
+// cookie hack。
+func (c *Client) restrictedFallbackMedia(ctx context.Context, token string) ([]byte, string, error) {
+	data, filename, err := c.previewDownloadMedia(ctx, token)
+	if err == nil {
+		_ = c.imageCache.PutFile(token, data, filename)
+		return data, filename, nil
+	}
+	log.Printf("preview_download 官方回退失败，降级 cookie: %v", err)
+	data, filename, cookieErr := c.cookieFallbackDownloadMedia(ctx, token)
+	if cookieErr != nil {
+		return nil, "", fmt.Errorf("preview_download 失败(%v)且 cookie 回退失败: %w", err, cookieErr)
+	}
 	return data, filename, nil
 }
