@@ -220,16 +220,13 @@ func newMirrorCommand() *cobra.Command {
 
 func newUploadCommand() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:               "upload <file.md>",
+		Use:               "upload <file.md> [more...]",
 		Aliases:           []string{"ul"},
-		Short:             "Upload local markdown file to Feishu Wiki",
-		ValidArgsFunction: mdFileCompletion(false),
+		Short:             "Upload local markdown files to Feishu Wiki",
+		ValidArgsFunction: mdFileCompletion(true),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) == 0 {
 				return exitWithMessage("请指定要上传的 Markdown 文件", 1)
-			}
-			if len(args) > 1 {
-				return exitWithMessage("upload 只接受一个 Markdown 文件参数", 1)
 			}
 			full, _ := cmd.Flags().GetBool("full")
 			incremental, _ := cmd.Flags().GetBool("incremental")
@@ -240,13 +237,16 @@ func newUploadCommand() *cobra.Command {
 			if uploadOpts.source != "" && (uploadOpts.spaceID != "" || uploadOpts.parentNodeToken != "") {
 				return exitWithMessage("--source 不能与 --space/--parent 同时使用", 1)
 			}
+			if uploadOpts.source != "" && len(args) > 1 {
+				return exitWithMessage("--source 不能与多个文件参数同时使用（多文件时由各文件 frontmatter 的 source 决定更新目标）", 1)
+			}
 			if uploadOpts.dryRun && !uploadOpts.incremental {
 				return exitWithMessage("--dry-run 不能与 --full 同时使用", 1)
 			}
 			if uploadOpts.json && uploadOpts.dryRun {
 				return exitWithMessage("--json 不能与 --dry-run 同时使用", 1)
 			}
-			return handleUploadCommand(args[0])
+			return handleUploadCommand(args)
 		},
 	}
 	// --incr 是 --incremental 的历史多字符别名，归一到同一 flag（老脚本零迁移）

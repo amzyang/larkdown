@@ -104,7 +104,7 @@ larkdown --as bot download <url>   # 显式使用应用凭证（bot 身份）
 | `config`   | -    | 读取或设置配置（含 `get` / `set` / `init` 子命令） |
 | `download` | `dl` | 下载飞书文档为 Markdown（支持多个 URL）   |
 | `mirror`   | -    | 单向只下载同步知识库/文件夹为本地镜像目录 |
-| `upload`   | `ul` | 上传 Markdown 到飞书 Wiki                |
+| `upload`   | `ul` | 上传 Markdown 到飞书 Wiki（支持多个文件） |
 | `publish`  | -    | 发布本地 HTML 文件/目录为飞书妙搭在线应用 |
 | `auth`     | -    | 认证管理：`login` / `status` / `logout`  |
 | `login`    | -    | `auth login` 的隐藏兼容别名              |
@@ -124,7 +124,7 @@ CI / 自动化场景可用环境变量 `LARKDOWN_APP_ID` / `LARKDOWN_APP_SECRET`
 | 0      | 成功                                                         |
 | 1      | 失败（含参数错误）；`diff` 有差异时也返回 1（类似 `git diff --exit-code`） |
 | 2      | `diff` 运行出错（网络、认证等），与「有差异」区分             |
-| 3      | 部分成功：`download` / `mirror` 完成但有文档或图片/附件下载失败 |
+| 3      | 部分成功：`download` / `mirror` 完成但有文档或图片/附件下载失败；`upload` 多文件时部分文件上传失败 |
 
 #### config 命令
 
@@ -198,17 +198,25 @@ cd my-wiki && larkdown mirror
 
 #### upload 命令
 
+接受一个或多个 Markdown 文件；每个文件按自身 frontmatter 的 `source` 决定更新目标，无 `source` 则新建（可用 `--space`/`--parent` 指定位置）。
+
+```bash
+larkdown upload doc.md                    # 单文件
+larkdown upload a.md b.md c.md            # 多文件：顺序上传，单项失败不中断
+larkdown upload --json a.md b.md          # 多文件 JSON 汇总 {documents, failed}
+```
+
 | 选项        | 简写 | 默认值     | 说明                                     |
 | ----------- | ---- | ---------- | ---------------------------------------- |
-| `--source`  | -    | -          | 目标飞书文档 URL（与 `--space`/`--parent` 互斥） |
+| `--source`  | -    | -          | 目标飞书文档 URL（与 `--space`/`--parent` 互斥；仅限单个文件） |
 | `--space`   | `-s` | 我的文档库 | Wiki 知识库 ID                           |
 | `--parent`  | `-p` | -          | 父节点 token（指定创建位置）             |
 | `--full`    | -    | false      | 全量更新（删除远端所有块后重建）         |
 | `--dry-run` | -    | false      | 预览增量 diff，不修改远端（与 `--full` 互斥） |
 | `--verbose` | `-v` | false      | dry-run 时连同未变化的块一起展示         |
-| `--json`    | -    | false      | 输出机读 JSON（file/is_new/url）；上传进度改道 stderr（与 `--dry-run` 互斥） |
+| `--json`    | -    | false      | 输出机读 JSON（单文件为 `{file,is_new,url}`，多文件为汇总 `{documents:[{file,is_new,url}],failed:[{ref,error}]}`）；上传进度改道 stderr（与 `--dry-run` 互斥） |
 
-> 更新已有文档默认为**增量更新**（仅修改变化的块）；如需全量重建请使用 `--full`。旧拼写 `--dryrun` 已移除，请使用 `--dry-run`。
+> 更新已有文档默认为**增量更新**（仅修改变化的块）；如需全量重建请使用 `--full`。旧拼写 `--dryrun` 已移除，请使用 `--dry-run`。多文件时顺序上传、单项失败告警后继续：全部成功退出码 0、全部失败 1、部分成功 3。
 
 #### publish 命令
 

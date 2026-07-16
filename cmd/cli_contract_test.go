@@ -167,7 +167,7 @@ func TestValidationExitErrors(t *testing.T) {
 		{[]string{"upload", "--source", "u", "--space", "s", "x.md"}, "--source 不能与 --space/--parent 同时使用"},
 		{[]string{"upload", "--full", "--dry-run", "x.md"}, "--dry-run 不能与 --full 同时使用"},
 		{[]string{"upload"}, "请指定要上传的 Markdown 文件"},
-		{[]string{"upload", "a.md", "b.md"}, "upload 只接受一个 Markdown 文件参数"},
+		{[]string{"upload", "--source", "u", "a.md", "b.md"}, "--source 不能与多个文件参数同时使用"},
 		{[]string{"upload", "--json", "--dry-run", "x.md"}, "--json 不能与 --dry-run 同时使用"},
 		{[]string{"publish", "--app-id", "app_x", "--new", "dir"}, "--app-id 不能与 --new 同时使用"},
 		{[]string{"publish", "--share", "bogus", "dir"}, "--share 必须是"},

@@ -62,6 +62,9 @@ cd my-wiki && larkdown mirror
 # 上传到个人知识库（默认）
 larkdown ul doc.md
 
+# 多文件顺序上传：各文件按自身 frontmatter source 更新，无 source 则新建
+larkdown ul a.md b.md c.md
+
 # 上传到指定空间和父节点
 larkdown ul doc.md -s <space_id> -p <parent_token>
 
@@ -139,13 +142,13 @@ larkdown 根据 URL 路径自动识别类型，不需要额外 flag：
 
 | 参数                    | 说明                               | 默认值     |
 | ----------------------- | ---------------------------------- | ---------- |
-| `<file.md>`             | 本地 Markdown 文件（必需）         | -          |
-| `--source`              | 目标飞书文档 URL（强制更新该文档） | -          |
+| `<file.md> [more...]`   | 一个或多个本地 Markdown 文件（必需） | -          |
+| `--source`              | 目标飞书文档 URL（强制更新该文档；仅限单个文件） | -          |
 | `-s, --space`           | Wiki 空间 ID                       | my_library |
 | `-p, --parent`          | 父节点 token                       | -          |
 | `--full`                | 全量重建（删除远端所有 block 后重新上传）  | false      |
 | `--dry-run`             | 预览增量 diff，不修改远端（与 `--full` 互斥） | false      |
-| `--json`                | stdout 输出机读 JSON `{file, is_new, url}`；上传进度改道 stderr（与 `--dry-run` 互斥） | false      |
+| `--json`                | stdout 输出机读 JSON：单文件为 `{file, is_new, url}`，多文件为汇总 `{documents:[{file,is_new,url}], failed:[{ref,error}]}`；上传进度改道 stderr（与 `--dry-run` 互斥） | false      |
 
 `--source` 与 `--space`/`--parent` 互斥。旧拼写 `--dryrun` 已移除，请使用 `--dry-run`。
 
@@ -154,6 +157,7 @@ larkdown 根据 URL 路径自动识别类型，不需要额外 flag：
 - **新建文档**：从 H1 提取标题，创建 Wiki 节点，上传内容，自动将 Wiki URL 写回文件 frontmatter 的 `source` 字段
 - **增量更新**（默认）：对比远端和本地 block 的内容签名（LCS diff），仅更新变化部分
 - **全量更新**（`--full`）：删除远端所有 block，重新上传
+- **多文件**：顺序上传；每个文件按自身 frontmatter `source` 决定更新目标，无 `source` 则按 `--space`/`--parent` 新建；单项失败告警后继续。退出码：0 全部成功 / 1 全部失败 / 3 部分成功（详情见 `--json` 的 `failed` 数组）
 
 ### publish
 
