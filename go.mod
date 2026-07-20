@@ -9,7 +9,7 @@ require (
 	github.com/alecthomas/chroma/v2 v2.27.0
 	github.com/browserutils/kooky v0.2.10
 	github.com/charmbracelet/colorprofile v0.4.3
-	github.com/getsentry/sentry-go v0.47.0
+	github.com/getsentry/sentry-go v0.48.0
 	github.com/gofrs/flock v0.13.0
 	github.com/pkg/errors v0.9.1
 	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2
