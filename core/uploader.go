@@ -1031,11 +1031,12 @@ func (u *Uploader) buildUpdateRequest(
 		if localText == nil {
 			return nil, nil, nil
 		}
+		lang := int64(localText.Style.Language)
 		return &lark.BatchUpdateDocxDocumentBlockReqRequest{
 			BlockID: &blockID,
 			UpdateText: &lark.BatchUpdateDocxDocumentBlockReqRequestUpdateText{
 				Elements: localText.Elements,
-				Style:    localText.Style,
+				Style:    &lark.BatchUpdateDocxDocumentBlockReqRequestUpdateTextStyleStyle{Language: &lang},
 				Fields:   []int64{4},
 			},
 		}, nil, nil
@@ -1051,11 +1052,13 @@ func (u *Uploader) buildUpdateRequest(
 		remoteDone := remoteText != nil && remoteText.Style != nil && remoteText.Style.Done
 		localDone := localText.Style != nil && localText.Style.Done
 		if remoteDone != localDone {
+			// Style 用指针字段的 batch_update 专用结构：done=false 必须显式携带，
+			// omitempty 吞掉 false 会让 fields=[2] 声明的字段缺值（1770001 invalid param）
 			return &lark.BatchUpdateDocxDocumentBlockReqRequest{
 				BlockID: &blockID,
 				UpdateText: &lark.BatchUpdateDocxDocumentBlockReqRequestUpdateText{
 					Elements: localText.Elements,
-					Style:    localText.Style,
+					Style:    &lark.BatchUpdateDocxDocumentBlockReqRequestUpdateTextStyleStyle{Done: &localDone},
 					Fields:   []int64{2},
 				},
 			}, nil, nil
