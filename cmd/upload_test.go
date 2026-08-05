@@ -73,4 +73,77 @@ func TestUploadReportView(t *testing.T) {
 			"failed":[{"ref":"b.md","error":"boom"}]
 		}`, string(data))
 	})
+
+	t.Run("补链结果进 link_repairs（omitempty）", func(t *testing.T) {
+		r := &uploadReport{
+			docs:    []uploadedDoc{{File: "a.md", IsNew: false, URL: "https://x.feishu.cn/wiki/t"}},
+			repairs: []linkRepair{{File: "a.md", OK: true}, {File: "c.md", OK: false, Error: "boom"}},
+		}
+		data, err := json.Marshal(r.view())
+		require.NoError(t, err)
+		assert.JSONEq(t, `{
+			"documents":[{"file":"a.md","is_new":false,"url":"https://x.feishu.cn/wiki/t"}],
+			"link_repairs":[{"file":"a.md","ok":true},{"file":"c.md","ok":false,"error":"boom"}]
+		}`, string(data))
+	})
+}
+
+// TestPlanLinkRepairs 锁二次补链的选取规则：上传成功、且至少一个降级 .md 引用的目标
+// 也在本批次成功上传的文件，按 pass 1 顺序返回；路径按绝对路径归一比较。
+func TestPlanLinkRepairs(t *testing.T) {
+	t.Run("前向引用：目标在后面上传成功", func(t *testing.T) {
+		out := []uploadOutcome{
+			{file: "docs/a.md", ok: true, refs: []string{"docs/b.md"}},
+			{file: "docs/b.md", ok: true},
+		}
+		assert.Equal(t, []string{"docs/a.md"}, planLinkRepairs(out))
+	})
+
+	t.Run("互引环：双方都补链", func(t *testing.T) {
+		out := []uploadOutcome{
+			{file: "a.md", ok: true, refs: []string{"b.md"}},
+			{file: "b.md", ok: true, refs: []string{"a.md"}},
+		}
+		assert.Equal(t, []string{"a.md", "b.md"}, planLinkRepairs(out))
+	})
+
+	t.Run("目标上传失败：不补链", func(t *testing.T) {
+		out := []uploadOutcome{
+			{file: "a.md", ok: true, refs: []string{"b.md"}},
+			{file: "b.md", ok: false},
+		}
+		assert.Empty(t, planLinkRepairs(out))
+	})
+
+	t.Run("目标不在批次内：不补链", func(t *testing.T) {
+		out := []uploadOutcome{
+			{file: "a.md", ok: true, refs: []string{"elsewhere/c.md"}},
+		}
+		assert.Empty(t, planLinkRepairs(out))
+	})
+
+	t.Run("引用方上传失败：跳过", func(t *testing.T) {
+		out := []uploadOutcome{
+			{file: "a.md", ok: false, refs: []string{"b.md"}},
+			{file: "b.md", ok: true},
+		}
+		assert.Empty(t, planLinkRepairs(out))
+	})
+
+	t.Run("路径拼写差异按绝对路径归一", func(t *testing.T) {
+		out := []uploadOutcome{
+			{file: "./docs/a.md", ok: true, refs: []string{"docs/x/../b.md"}},
+			{file: "docs/b.md", ok: true},
+		}
+		assert.Equal(t, []string{"./docs/a.md"}, planLinkRepairs(out))
+	})
+
+	t.Run("每文件只补一次", func(t *testing.T) {
+		out := []uploadOutcome{
+			{file: "a.md", ok: true, refs: []string{"b.md", "c.md"}},
+			{file: "b.md", ok: true},
+			{file: "c.md", ok: true},
+		}
+		assert.Equal(t, []string{"a.md"}, planLinkRepairs(out))
+	})
 }

@@ -2562,3 +2562,25 @@ func TestLocalMdLinkLateResolutionChangesSignature(t *testing.T) {
 	// 引用文件后补上传后，同一 markdown 的块签名应变化，驱动增量 diff 原地补链接
 	assert.NotEqual(t, SignatureFromLocalEntry(before, 0), SignatureFromLocalEntry(after, 0))
 }
+
+func TestConvertCollectsUnresolvedMdRefs(t *testing.T) {
+	dir := t.TempDir()
+	writeLocalMd(t, dir, "pending.md", "# P\n\n未上传\n")
+	writeLocalMd(t, dir, "done.md", "# D\n<!--\nsource: https://feishu.cn/wiki/DDDD\n-->\n")
+
+	md := "见 [P](./pending.md) 与 [D](./done.md)\n\n- 再见 [P2](./pending.md)\n- 缺失 [M](./missing.md)，外链 [E](https://example.com)"
+	result, err := ConvertMarkdownToDocxBlocks(md, dir)
+	require.NoError(t, err)
+
+	// 仅收集「本地存在但尚无 source」的 .md 目标；重复引用去重；已解析/不存在/外链不收集
+	assert.Equal(t, []string{filepath.Join(dir, "pending.md")}, result.UnresolvedMdRefs)
+}
+
+func TestConvertNoUnresolvedMdRefsWhenAllResolved(t *testing.T) {
+	dir := t.TempDir()
+	writeLocalMd(t, dir, "done.md", "# D\n<!--\nsource: https://feishu.cn/wiki/DDDD\n-->\n")
+
+	result, err := ConvertMarkdownToDocxBlocks("见 [D](./done.md)", dir)
+	require.NoError(t, err)
+	assert.Empty(t, result.UnresolvedMdRefs)
+}

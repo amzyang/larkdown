@@ -214,9 +214,11 @@ larkdown upload --json a.md b.md          # 多文件 JSON 汇总 {documents, fa
 | `--full`    | -    | false      | 全量更新（删除远端所有块后重建）         |
 | `--dry-run` | -    | false      | 预览增量 diff，不修改远端（与 `--full` 互斥） |
 | `--verbose` | `-v` | false      | dry-run 时连同未变化的块一起展示         |
-| `--json`    | -    | false      | 输出机读 JSON（单文件为 `{file,is_new,url}`，多文件为汇总 `{documents:[{file,is_new,url}],failed:[{ref,error}]}`）；上传进度改道 stderr（与 `--dry-run` 互斥） |
+| `--json`    | -    | false      | 输出机读 JSON（单文件为 `{file,is_new,url}`，多文件为汇总 `{documents:[{file,is_new,url}],failed:[{ref,error}],link_repairs:[{file,ok,error?}]}`）；上传进度改道 stderr（与 `--dry-run` 互斥） |
 
 > 更新已有文档默认为**增量更新**（仅修改变化的块）；如需全量重建请使用 `--full`。旧拼写 `--dryrun` 已移除，请使用 `--dry-run`。多文件时顺序上传、单项失败告警后继续：全部成功退出码 0、全部失败 1、部分成功 3。
+>
+> **文档互引自动补链**：正文中指向本地 `.md` 文件的链接，目标已上传（frontmatter 有 `source`）时转为飞书文档链接，未上传则降级为纯文本。多文件上传会在全部文件传完后自动检测「降级引用的目标已在本批次上传」的文件，**二次增量上传补链**（终端会提示 `二次上传补链`），互引成环也能收敛；补链失败仅告警不影响退出码，重跑一次 `larkdown upload` 即可修复。`--dry-run` 只提示将补链的文件，不执行。
 
 #### publish 命令
 

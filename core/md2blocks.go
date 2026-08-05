@@ -34,6 +34,11 @@ type ConvertResult struct {
 	// 用于写入失败时把 mention 降级为纯文本（见 uploader 的 mention fallback）。
 	MentionUserNames map[string]string
 
+	// UnresolvedMdRefs 记录降级为纯文本的本地 .md 交叉引用目标路径（文件存在但
+	// frontmatter 尚无 source，即未上传），去重、按出现顺序，相对引用已按 mdDir 展开。
+	// 供多文件上传在目标上传后自动二次补链。
+	UnresolvedMdRefs []string
+
 	dgMap map[int]*DescendantGroup // lazy-init: TopBlockIndex → DescendantGroup
 }
 
@@ -83,12 +88,13 @@ type detailsCapture struct {
 
 // converter 持有转换状态
 type converter struct {
-	source       []byte
-	result       *ConvertResult
-	idGen        *blockIDGenerator
-	mdDir        string            // Markdown 文件所在目录（用于解析本地文件链接）
-	detailsStack []*detailsCapture // 支持嵌套 <details>
-	cite         *citePending      // 当前正在解析的 <cite> 标签（行内引用）
+	source         []byte
+	result         *ConvertResult
+	idGen          *blockIDGenerator
+	mdDir          string            // Markdown 文件所在目录（用于解析本地文件链接）
+	detailsStack   []*detailsCapture // 支持嵌套 <details>
+	cite           *citePending      // 当前正在解析的 <cite> 标签（行内引用）
+	unresolvedSeen map[string]bool   // UnresolvedMdRefs 去重集合
 }
 
 type blockIDGenerator struct {
@@ -1622,7 +1628,8 @@ func isLocalMdLink(dest string) bool {
 }
 
 // resolveLocalMdLink 解析本地 .md 交叉引用：目标已上传（frontmatter 带 source）时
-// 返回其飞书 URL，否则返回空串（降级纯文本，待目标上传后由增量 diff 补链接）。
+// 返回其飞书 URL，否则记入 UnresolvedMdRefs 并返回空串（降级纯文本，
+// 待目标上传后由增量 diff 补链接）。
 func (c *converter) resolveLocalMdLink(dest string) string {
 	if !isLocalMdLink(dest) || !c.isLocalFile(dest) {
 		return ""
@@ -1633,13 +1640,27 @@ func (c *converter) resolveLocalMdLink(dest string) string {
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
+		c.recordUnresolvedMdRef(path)
 		return ""
 	}
 	fm, _, err := ParseFrontMatter(string(data))
-	if err != nil || fm == nil {
+	if err != nil || fm == nil || fm.Source == "" {
+		c.recordUnresolvedMdRef(path)
 		return ""
 	}
 	return fm.Source
+}
+
+// recordUnresolvedMdRef 记录一个降级的本地 .md 引用目标（去重、保持出现顺序）
+func (c *converter) recordUnresolvedMdRef(path string) {
+	if c.unresolvedSeen[path] {
+		return
+	}
+	if c.unresolvedSeen == nil {
+		c.unresolvedSeen = map[string]bool{}
+	}
+	c.unresolvedSeen[path] = true
+	c.result.UnresolvedMdRefs = append(c.result.UnresolvedMdRefs, path)
 }
 
 // isValidLinkURL 判断链接 URL 是否可被飞书 link.url 接受（必须带 scheme，

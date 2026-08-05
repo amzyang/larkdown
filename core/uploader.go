@@ -38,6 +38,10 @@ type Uploader struct {
 	// mediaBaselineByToken 本次上传由 applyMediaTokenMappings 按路径映射写回 token 的块的基准 md5
 	// （token→md5），供 Equal 内容检测据此判断媒体是否已变（路径映射命中的块用 sidecar 基准而非下载缓存）。
 	mediaBaselineByToken map[string]string
+	// unresolvedMdRefs 捕获自本次上传 markdown 转换的降级 .md 引用（ConvertResult.
+	// UnresolvedMdRefs），随 UploadResult 返回。同一次 Upload 的多个转换点转换同一
+	// 份 body，赋值幂等。
+	unresolvedMdRefs []string
 }
 
 // NewUploader 创建上传器（画板映射等持久状态落默认配置目录）。
@@ -75,6 +79,9 @@ type UploadOptions struct {
 type UploadResult struct {
 	FrontMatter *FrontMatter // 更新后的 frontmatter
 	IsNew       bool         // 是否为新建
+	// UnresolvedMdRefs 正文中降级为纯文本的本地 .md 引用目标路径（文件存在但尚无
+	// source），相对引用已按文件目录展开。供 cmd 层在批量上传后自动二次补链。
+	UnresolvedMdRefs []string
 }
 
 // SourceGoneError 表示 source 指向的目标文档已删除、不存在或不可访问（issue #9）。
@@ -244,7 +251,7 @@ func (u *Uploader) createDocument(ctx context.Context, filePath, body string, op
 		}
 	}
 
-	return &UploadResult{FrontMatter: fm, IsNew: true}, nil
+	return &UploadResult{FrontMatter: fm, IsNew: true, UnresolvedMdRefs: u.unresolvedMdRefs}, nil
 }
 
 // updateDocument 更新已有文档
@@ -273,7 +280,7 @@ func (u *Uploader) updateDocument(ctx context.Context, filePath string, fm *Fron
 		}
 	}
 
-	return &UploadResult{FrontMatter: fm, IsNew: false}, nil
+	return &UploadResult{FrontMatter: fm, IsNew: false, UnresolvedMdRefs: u.unresolvedMdRefs}, nil
 }
 
 // fullUpdate 全量替换更新（board-aware）：删除时保留 token 仍被 markdown 引用的白板，
@@ -304,6 +311,7 @@ func (u *Uploader) fullUpdate(ctx context.Context, documentID, filePath, body st
 		if err != nil {
 			return fmt.Errorf("转换 Markdown 失败: %w", err)
 		}
+		u.unresolvedMdRefs = localResult.UnresolvedMdRefs
 		resolveEntityTokens(localResult, remoteEntityTokens(rootBlocks, blockMap))
 		// 复用未变 plantuml 画板的历史 token，使其计入 referencedTokens 而被保留、不重建
 		u.applyBoardTokenMappings(localResult, documentID, rootBlocks)
@@ -476,6 +484,7 @@ func (u *Uploader) incrementalUpdate(ctx context.Context, documentID, filePath, 
 		return fmt.Errorf("转换 Markdown 失败: %w", err)
 	}
 	u.mentionUserNames = localResult.MentionUserNames
+	u.unresolvedMdRefs = localResult.UnresolvedMdRefs
 	resolveEntityTokens(localResult, remoteEntityTokens(rootBlocks, blockMap))
 	// 对无 token 的本地 plantuml 画板，按源 hash 复用历史 token（源未变则跳过重建）
 	u.applyBoardTokenMappings(localResult, documentID, rootBlocks)
@@ -1503,6 +1512,7 @@ func (u *Uploader) writeContent(ctx context.Context, documentID, filePath, conte
 // 跳过 round-trip 实体（白板/已解析 token 的图片/文件）：它们已在远程保留、复用原块，不重建。
 func (u *Uploader) writeResult(ctx context.Context, documentID, filePath string, result *ConvertResult) error {
 	u.mentionUserNames = result.MentionUserNames
+	u.unresolvedMdRefs = result.UnresolvedMdRefs
 
 	if len(result.TopBlocks) == 0 {
 		return nil

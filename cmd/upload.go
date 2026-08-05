@@ -7,6 +7,8 @@ import (
 	"io"
 	"log"
 	"os"
+	"path/filepath"
+	"strings"
 
 	"github.com/amzyang/larkdown/core"
 )
@@ -31,25 +33,75 @@ type uploadedDoc struct {
 	URL   string `json:"url"`
 }
 
+// linkRepair 是一次二次上传补链的结果。补链失败不影响退出码（文档本体已上传成功）。
+type linkRepair struct {
+	File  string `json:"file"`
+	OK    bool   `json:"ok"`
+	Error string `json:"error,omitempty"`
+}
+
 // uploadReport 收集多文件上传的产出与失败，驱动部分成功退出码（exit 3）与 --json 汇总。
 // 顺序上传、无并发，不需要锁。
 type uploadReport struct {
-	docs   []uploadedDoc
-	failed []reportFailure
+	docs    []uploadedDoc
+	failed  []reportFailure
+	repairs []linkRepair
 }
 
 // uploadReportView 是 upload 多文件 --json 的输出模型。
 type uploadReportView struct {
-	Documents []uploadedDoc   `json:"documents"`
-	Failed    []reportFailure `json:"failed,omitempty"`
+	Documents   []uploadedDoc   `json:"documents"`
+	Failed      []reportFailure `json:"failed,omitempty"`
+	LinkRepairs []linkRepair    `json:"link_repairs,omitempty"`
 }
 
 func (r *uploadReport) view() uploadReportView {
-	view := uploadReportView{Documents: r.docs, Failed: r.failed}
+	view := uploadReportView{Documents: r.docs, Failed: r.failed, LinkRepairs: r.repairs}
 	if view.Documents == nil {
 		view.Documents = []uploadedDoc{}
 	}
 	return view
+}
+
+// uploadOutcome 是 pass 1 中单个文件的结局，驱动二次补链决策。
+type uploadOutcome struct {
+	file string   // CLI 传入的文件路径
+	ok   bool     // 是否上传成功
+	refs []string // 转换期降级的本地 .md 引用目标（相对引用已按文件目录展开）
+}
+
+// planLinkRepairs 返回需要二次上传补链的文件（保持 pass 1 顺序）：上传成功、
+// 且至少一个降级 .md 引用的目标也在本批次成功上传（现已有 source）的文件，
+// 再传一次即可让增量 diff 识别「纯文本→链接」的块变更并原地补上链接。
+// 目标不在批次内或上传失败的引用补不了，跳过。路径按绝对路径归一比较。
+func planLinkRepairs(outcomes []uploadOutcome) []string {
+	uploaded := make(map[string]bool, len(outcomes))
+	for _, o := range outcomes {
+		if o.ok {
+			uploaded[absPath(o.file)] = true
+		}
+	}
+	var repairs []string
+	for _, o := range outcomes {
+		if !o.ok {
+			continue
+		}
+		for _, ref := range o.refs {
+			if uploaded[absPath(ref)] {
+				repairs = append(repairs, o.file)
+				break
+			}
+		}
+	}
+	return repairs
+}
+
+func absPath(p string) string {
+	abs, err := filepath.Abs(p)
+	if err != nil {
+		return filepath.Clean(p)
+	}
+	return abs
 }
 
 // finalize 决定最终退出状态：无失败 → firstErr 原样（通常 nil）；有失败且有产出 →
@@ -88,6 +140,7 @@ func handleUploadCommand(files []string) error {
 
 	report := &uploadReport{}
 	var firstErr error
+	var outcomes []uploadOutcome
 	for _, filePath := range files {
 		if len(files) > 1 {
 			fmt.Fprintf(headerW, "\n===== %s =====\n", filePath)
@@ -104,6 +157,7 @@ func handleUploadCommand(files []string) error {
 			}
 			log.Printf("警告: %s 上传失败: %v", filePath, err)
 			report.failed = append(report.failed, reportFailure{Ref: filePath, Error: err.Error()})
+			outcomes = append(outcomes, uploadOutcome{file: filePath, ok: false})
 			if firstErr == nil {
 				if errors.As(err, &sge) {
 					firstErr = exitWithMessage(err.Error(), 1)
@@ -113,6 +167,7 @@ func handleUploadCommand(files []string) error {
 			}
 			continue
 		}
+		outcomes = append(outcomes, uploadOutcome{file: filePath, ok: true, refs: result.UnresolvedMdRefs})
 		report.docs = append(report.docs, uploadedDoc{
 			File:  filePath,
 			IsNew: result.IsNew,
@@ -131,6 +186,10 @@ func handleUploadCommand(files []string) error {
 		fmt.Printf("Wiki URL: %s\n", result.FrontMatter.Source)
 	}
 
+	if len(files) > 1 {
+		runLinkRepairs(ctx, client, outcomes, report, headerW)
+	}
+
 	if uploadOpts.json {
 		if len(files) == 1 {
 			// 单文件 JSON 形状零迁移：扁平单对象（单文件失败已提前 return，必有一项）
@@ -145,6 +204,54 @@ func handleUploadCommand(files []string) error {
 		}
 	}
 	return report.finalize(firstErr)
+}
+
+// runLinkRepairs 多文件 pass 2：对「降级 .md 引用的目标已在本批次上传」的文件
+// 自动二次增量上传补链。dry-run 只提示不执行（pass 1 未落库、目标无 source，
+// 补链无从谈起）；补链失败仅警告并计入 --json 的 link_repairs，不改退出码。
+func runLinkRepairs(ctx context.Context, client *core.Client, outcomes []uploadOutcome, report *uploadReport, headerW io.Writer) {
+	if uploadOpts.dryRun {
+		// dry-run 下所有文件都视作「将被上传」，据此提示实际上传时的补链行为
+		hint := make([]uploadOutcome, len(outcomes))
+		copy(hint, outcomes)
+		for i := range hint {
+			hint[i].ok = true
+		}
+		if hints := planLinkRepairs(hint); len(hints) > 0 {
+			fmt.Fprintf(headerW, "\n[dryrun] %d 个文件含指向本批次文件的文档引用，实际上传时将自动二次上传补链: %s\n",
+				len(hints), strings.Join(hints, ", "))
+		}
+		return
+	}
+
+	repairs := planLinkRepairs(outcomes)
+	if len(repairs) == 0 {
+		return
+	}
+	fmt.Fprintf(headerW, "\n检测到 %d 个文件的文档引用目标已在本批次完成上传，自动二次上传补链\n", len(repairs))
+	for _, filePath := range repairs {
+		fmt.Fprintf(headerW, "\n===== %s (二次上传补链) =====\n", filePath)
+		if _, err := repairOneFile(ctx, client, filePath); err != nil {
+			log.Printf("警告: %s 补链失败（文档本体已上传成功，重跑 larkdown upload 可修复链接）: %v", filePath, err)
+			report.repairs = append(report.repairs, linkRepair{File: filePath, OK: false, Error: err.Error()})
+			continue
+		}
+		report.repairs = append(report.repairs, linkRepair{File: filePath, OK: true})
+	}
+}
+
+// repairOneFile 二次上传补链：pass 1 已把 source 写回目标文件 frontmatter，重传一次
+// 让增量 diff 识别「纯文本→链接」的块签名变化并原地 update_text_elements 补上。
+// 强制增量（--full 也不重建第二遍）；不带 --source/--space/--parent（本文件 frontmatter 已有 source）。
+func repairOneFile(ctx context.Context, client *core.Client, filePath string) (*core.UploadResult, error) {
+	uploader, err := core.NewUploader(client)
+	if err != nil {
+		return nil, err
+	}
+	if uploadOpts.json {
+		uploader.SetOutput(os.Stderr)
+	}
+	return uploader.Upload(ctx, filePath, core.UploadOptions{Incremental: true})
 }
 
 // uploadOneFile 上传单个文件。每个文件新建 Uploader，隔离 pendingBoardMappings/
