@@ -534,8 +534,14 @@ func (p *Parser) ParseDocxTextElementTextRun(tr *lark.DocxTextElementTextRun) st
 				// destination 位：解码保可读，再对会破坏 [](...) 结构的字符做 percent-encode
 				// 防护（签名双侧过 UnescapeURL 归一，不引入漂移）
 				linkURL := utils.UnescapeURL(link.URL)
+				dest := utils.EscapeMarkdownLinkDest(linkURL)
+				if p.inTableCell {
+					// GFM 按原始文本的 | 切分 cell，destination 位不能 backslash 转义，
+					// 与 sheet 链接同法 percent-encode
+					dest = strings.ReplaceAll(dest, "|", "%7C")
+				}
 				openers = append(openers, "[")
-				closers = append(closers, fmt.Sprintf("](%s)", utils.EscapeMarkdownLinkDest(linkURL)))
+				closers = append(closers, fmt.Sprintf("](%s)", dest))
 				p.collectRef(DocRefFromLink(linkURL, tr.Content))
 			}
 			if style.Bold {
@@ -680,7 +686,7 @@ func (p *Parser) ParseDocxBlockFile(file *lark.DocxBlockFile) string {
 	}
 	p.FileTokens = append(p.FileTokens, file.Token)
 	// 文件名走 label 转义（[ ] * 等破坏链接结构；上传侧 extractLinkText 反转义还原）
-	fileName = escapeMarkdownText(fileName, escapeContext{})
+	fileName = escapeMarkdownText(fileName, escapeContext{inTableCell: p.inTableCell})
 	return fmt.Sprintf("[%s](%s)\n", fileName, file.Token)
 }
 
