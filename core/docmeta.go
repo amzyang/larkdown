@@ -174,9 +174,9 @@ func GenerateLlmsTxt(idx *DocsIndex) string {
 	buf.WriteString(fmt.Sprintf("# %s Docs\n\n## Docs\n", idx.RootName))
 
 	for _, doc := range idx.Docs {
-		// 转义标题中的特殊字符
+		// 转义标题中的特殊字符；RelPath 来自 title 的文件名，含空格/括号须尖括号包裹
 		title := escapeMarkdownLink(doc.Title)
-		buf.WriteString(fmt.Sprintf("- [%s](%s)\n", title, doc.RelPath))
+		buf.WriteString(fmt.Sprintf("- [%s](%s)\n", title, utils.QuoteLinkDestIfNeeded(doc.RelPath)))
 	}
 	writeRefsSection(&buf, idx.Refs)
 	return buf.String()
@@ -207,7 +207,7 @@ func writeRefsSection(buf *strings.Builder, refs []RefDoc) {
 	buf.WriteString("## 引用文档 (_refs)\n\n")
 	for _, ref := range refs {
 		buf.WriteString(fmt.Sprintf("- [%s](%s) ← <%s>\n",
-			escapeMarkdownLink(ref.Title), ref.RelPath, ref.SourceURL))
+			escapeMarkdownLink(ref.Title), utils.QuoteLinkDestIfNeeded(ref.RelPath), ref.SourceURL))
 	}
 }
 
@@ -220,7 +220,7 @@ func writeFolder(buf *strings.Builder, node *FolderNode, depth int) {
 	// 写入该目录下的文档
 	for _, doc := range node.Docs {
 		title := escapeMarkdownLink(doc.Title)
-		buf.WriteString(fmt.Sprintf("### [%s](%s)\n", title, doc.RelPath))
+		buf.WriteString(fmt.Sprintf("### [%s](%s)\n", title, utils.QuoteLinkDestIfNeeded(doc.RelPath)))
 		if len(doc.Headings) == 0 {
 			buf.WriteString("* (No headings found)\n")
 		} else {
@@ -238,18 +238,17 @@ func writeFolder(buf *strings.Builder, node *FolderNode, depth int) {
 func writeHeadings(buf *strings.Builder, headings []Heading, indent int) {
 	prefix := strings.Repeat("  ", indent)
 	for _, h := range headings {
-		buf.WriteString(fmt.Sprintf("%s* %s\n", prefix, h.Text))
+		// 标题纯文本进列表项：转义活性字符，行首防护防块级翻转（- # 等开头）
+		buf.WriteString(fmt.Sprintf("%s* %s\n", prefix, escapeMarkdownText(h.Text, escapeContext{atLineStart: true})))
 		if len(h.Children) > 0 {
 			writeHeadings(buf, h.Children, indent+1)
 		}
 	}
 }
 
-// escapeMarkdownLink 转义 Markdown 链接中的特殊字符
+// escapeMarkdownLink 转义索引链接 label 中的 Markdown 活性字符（全量 label 模式）
 func escapeMarkdownLink(text string) string {
-	text = strings.ReplaceAll(text, "[", "\\[")
-	text = strings.ReplaceAll(text, "]", "\\]")
-	return text
+	return escapeMarkdownText(text, escapeContext{})
 }
 
 // WriteDocsIndex 写入索引文件到磁盘

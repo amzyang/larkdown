@@ -204,6 +204,11 @@ func TestEscapeMarkdownLink(t *testing.T) {
 		{"普通文本", "普通文本"},
 		{"带[括号]的文本", "带\\[括号\\]的文本"},
 		{"[多个][括号]", "\\[多个\\]\\[括号\\]"},
+		// label 全量转义：标题里的 * _ ~ ` $ < 同样破坏索引链接渲染
+		{"每周 *重点* 汇总", "每周 \\*重点\\* 汇总"},
+		{"设计_稿 v2", "设计_稿 v2"}, // intraword _ 不成强调，无需转义
+		{"周报 _draft_ 版", "周报 \\_draft\\_ 版"},
+		{"价格 $100", "价格 \\$100"},
 	}
 
 	for _, tt := range tests {
@@ -211,6 +216,18 @@ func TestEscapeMarkdownLink(t *testing.T) {
 		if result != tt.expected {
 			t.Errorf("escapeMarkdownLink(%q) = %q, want %q", tt.input, result, tt.expected)
 		}
+	}
+}
+
+// 索引链接的 RelPath 位含空格/括号（文件名来自 title）时须尖括号包裹，
+// 否则 ](path) 结构破坏。
+func TestGenerateLlmsTxtQuotesRelPath(t *testing.T) {
+	idx := NewDocsIndex("Root", "/out")
+	idx.AddDoc(DocMeta{Title: "周报 (最终)", RelPath: "周报 (最终).md"}, "/out")
+	got := GenerateLlmsTxt(idx)
+	want := "- [周报 (最终)](<周报 (最终).md>)\n"
+	if !strings.Contains(got, want) {
+		t.Errorf("GenerateLlmsTxt 缺少 %q，实际:\n%s", want, got)
 	}
 }
 
