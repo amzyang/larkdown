@@ -6,7 +6,7 @@
 
 **Markdown** is created by [Daring Fireball](http://daringfireball.net/); the original guideline is [here](http://daringfireball.net/projects/markdown/syntax). Its syntax, however, varies between different parsers or editors. **Typora** is using [GitHub Flavored Markdown](https://help.github.com/articles/github-flavored-markdown/).
 
-[toc]
+\[toc\]
 
 ## Block Elements
 
@@ -66,7 +66,7 @@ Input `1. list item 1` will create an ordered list - their markdown source code 
 
 ### Task List
 
-Task lists are lists with items marked as either [ ] or [x] (incomplete or complete). For example:
+Task lists are lists with items marked as either \[ \] or \[x\] (incomplete or complete). For example:
 
 ```markdown
 - [ ] a task list item
@@ -82,7 +82,7 @@ You can change the complete/incomplete state by clicking on the checkbox before 
 
 Typora only supports fences in GitHub Flavored Markdown. Original code blocks in markdown are not supported.
 
-Using fences is easy: Input ``` and press `return`. Add an optional language identifier after ``` and we'll run it through syntax highlighting:
+Using fences is easy: Input \`\`\` and press `return`. Add an optional language identifier after \`\`\` and we'll run it through syntax highlighting:
 
 ```
 Here's an example:
@@ -109,7 +109,7 @@ To add a mathematical expression, input `$$` and press the 'Return' key. This wi
 
 $$\mathbf{V}_1 \times \mathbf{V}_2 = \begin{vmatrix}\mathbf{i} & \mathbf{j} & \mathbf{k} \\\frac{\partial X}{\partial u} & \frac{\partial Y}{\partial u} & 0 \\\frac{\partial X}{\partial v} & \frac{\partial Y}{\partial v} & 0 \\\end{vmatrix}$$
 
-In the markdown source file, the math block is a *LaTeX* expression wrapped by a pair of ‘$$’ marks:
+In the markdown source file, the math block is a *LaTeX* expression wrapped by a pair of ‘\$\$’ marks:
 
 ```markdown
 $$
@@ -164,7 +164,7 @@ You can create footnotes like this[^footnote].
 
 will produce:
 
-You can create footnotes like this[1].
+You can create footnotes like this\[1\].
 
 Hover over the ‘footnote’ superscript to see content of the footnote.
 
@@ -190,7 +190,7 @@ Span elements will be parsed and rendered right after typing. Moving the cursor 
 
 Markdown supports two styles of links: inline and reference.
 
-In both styles, the link text is delimited by [square brackets].
+In both styles, the link text is delimited by \[square brackets\].
 
 To create an inline link, use a set of regular parentheses immediately after the link text’s closing square bracket. Inside the parentheses, put the URL where you want the link to point, along with an optional title for the link, surrounded in quotes. For example:
 
@@ -313,7 +313,7 @@ Typora recommends using the `**` symbol.
 
 ### Code
 
-To indicate an inline span of code, wrap it with backtick quotes (`). Unlike a pre-formatted code block, a code span indicates code within a normal paragraph. For example:
+To indicate an inline span of code, wrap it with backtick quotes (\`). Unlike a pre-formatted code block, a code span indicates code within a normal paragraph. For example:
 
 ```markdown
 Use the `printf()` function.
@@ -345,7 +345,7 @@ User can trigger auto-complete suggestions for emoji by pressing `ESC` key, or t
 
 To use this feature, please enable it first in the `Preference` Panel -> `Markdown` Tab. Then, use `$` to wrap a TeX command. For example: `$\lim_{x \to \infty} \exp(-x) = 0$` will be rendered as LaTeX command.
 
-To trigger inline preview for inline math: input “$”, then press the `ESC` key, then input a TeX command.
+To trigger inline preview for inline math: input “\$”, then press the `ESC` key, then input a TeX command.
 
 You can find more details [here](https://support.typora.io/Math/).
 
@@ -387,4 +387,4 @@ You can find more details [here](https://support.typora.io/HTML/).
 
 ---
 
-[1]Here is the text of the footnote. 
+\[1\]Here is the text of the footnote. 

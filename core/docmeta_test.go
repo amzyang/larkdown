@@ -302,6 +302,21 @@ func TestExtractHeadingsFromMarkdown(t *testing.T) {
 	}
 }
 
+// 下载产物的标题行带 backslash 转义（escapeMarkdownText），提取标题用于
+// wiki 节点名/索引/文件名时须反转义，否则 \_ 会字面进入节点名与文件名。
+func TestExtractTitleUnescapes(t *testing.T) {
+	if got := ExtractTitle(`# foo \_bar\_ 与 \$100`); got != "foo _bar_ 与 $100" {
+		t.Errorf("ExtractTitle = %q", got)
+	}
+}
+
+func TestExtractHeadingsFromMarkdownUnescapes(t *testing.T) {
+	got := ExtractHeadingsFromMarkdown("## 价格 \\$100 \\[草稿\\]\n")
+	if len(got) != 1 || got[0].Text != "价格 $100 [草稿]" {
+		t.Errorf("Headings = %+v", got)
+	}
+}
+
 func TestLocalDocMeta(t *testing.T) {
 	body := "# 文档标题\n\n## 章节一\n\n内容\n\n---\n\n## 评论\n\n> 某人: 评论内容\n"
 	meta := LocalDocMeta("/tmp/out/文档标题.md", body)

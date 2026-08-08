@@ -1,0 +1,227 @@
+{
+  "document": {
+    "document_id": "ROOTDOC",
+    "title": "Escape"
+  },
+  "blocks": [
+    {
+      "block_id": "ROOTDOC",
+      "children": ["t1", "t2", "t3", "t4", "t5", "t6", "t7", "q1", "b1", "td1", "code1", "tbl"],
+      "block_type": 1,
+      "page": {
+        "style": {},
+        "elements": [
+          { "text_run": { "content": "Escape", "text_element_style": {} } }
+        ]
+      }
+    },
+    {
+      "block_id": "t1",
+      "parent_id": "ROOTDOC",
+      "block_type": 2,
+      "text": {
+        "style": {},
+        "elements": [
+          { "text_run": { "content": "他说 _强调_ 一下，*星号* [标签] ~波浪~ <tag> $100，而 snake_case_name 不动", "text_element_style": {} } }
+        ]
+      }
+    },
+    {
+      "block_id": "t2",
+      "parent_id": "ROOTDOC",
+      "block_type": 2,
+      "text": {
+        "style": {},
+        "elements": [
+          { "text_run": { "content": "链接 ", "text_element_style": {} } },
+          { "text_run": { "content": "https://example.com/_abc", "text_element_style": { "link": { "url": "https%3A%2F%2Fexample.com%2F_abc" } } } }
+        ]
+      }
+    },
+    {
+      "block_id": "t3",
+      "parent_id": "ROOTDOC",
+      "block_type": 2,
+      "text": {
+        "style": {},
+        "elements": [
+          { "text_run": { "content": "报告 (最终版)", "text_element_style": { "link": { "url": "https%3A%2F%2Fexample.com%2Fa%20%281%29.pdf" } } } }
+        ]
+      }
+    },
+    {
+      "block_id": "t4",
+      "parent_id": "ROOTDOC",
+      "block_type": 2,
+      "text": {
+        "style": {},
+        "elements": [
+          { "text_run": { "content": "- 不是列表", "text_element_style": {} } }
+        ]
+      }
+    },
+    {
+      "block_id": "t5",
+      "parent_id": "ROOTDOC",
+      "block_type": 2,
+      "text": {
+        "style": {},
+        "elements": [
+          { "text_run": { "content": "1. 不是编号", "text_element_style": {} } }
+        ]
+      }
+    },
+    {
+      "block_id": "t6",
+      "parent_id": "ROOTDOC",
+      "block_type": 2,
+      "text": {
+        "style": {},
+        "elements": [
+          { "text_run": { "content": "# 不是标题", "text_element_style": {} } }
+        ]
+      }
+    },
+    {
+      "block_id": "t7",
+      "parent_id": "ROOTDOC",
+      "block_type": 2,
+      "text": {
+        "style": {},
+        "elements": [
+          { "text_run": { "content": "> 不是引用", "text_element_style": {} } }
+        ]
+      }
+    },
+    {
+      "block_id": "q1",
+      "parent_id": "ROOTDOC",
+      "block_type": 15,
+      "quote": {
+        "style": {},
+        "elements": [
+          { "text_run": { "content": "[!NOTE] 不是告警", "text_element_style": {} } }
+        ]
+      }
+    },
+    {
+      "block_id": "b1",
+      "parent_id": "ROOTDOC",
+      "block_type": 12,
+      "bullet": {
+        "style": {},
+        "elements": [
+          { "text_run": { "content": "[ ] 不是任务", "text_element_style": {} } }
+        ]
+      }
+    },
+    {
+      "block_id": "td1",
+      "parent_id": "ROOTDOC",
+      "block_type": 17,
+      "todo": {
+        "style": { "done": false },
+        "elements": [
+          { "text_run": { "content": "[x] 存量文本", "text_element_style": {} } }
+        ]
+      }
+    },
+    {
+      "block_id": "code1",
+      "parent_id": "ROOTDOC",
+      "block_type": 14,
+      "code": {
+        "style": { "language": 1 },
+        "elements": [
+          { "text_run": { "content": "plain_text *star* [x]", "text_element_style": {} } }
+        ]
+      }
+    },
+    {
+      "block_id": "tbl",
+      "parent_id": "ROOTDOC",
+      "children": ["cellA1", "cellB1", "cellA2", "cellB2"],
+      "block_type": 31,
+      "table": {
+        "cells": ["cellA1", "cellB1", "cellA2", "cellB2"],
+        "property": {
+          "row_size": 2,
+          "column_size": 2,
+          "column_width": [100, 100]
+        }
+      }
+    },
+    {
+      "block_id": "cellA1",
+      "parent_id": "tbl",
+      "children": ["ctA1"],
+      "block_type": 32,
+      "table_cell": {}
+    },
+    {
+      "block_id": "ctA1",
+      "parent_id": "cellA1",
+      "block_type": 2,
+      "text": {
+        "style": {},
+        "elements": [
+          { "text_run": { "content": "列|一", "text_element_style": {} } }
+        ]
+      }
+    },
+    {
+      "block_id": "cellB1",
+      "parent_id": "tbl",
+      "children": ["ctB1"],
+      "block_type": 32,
+      "table_cell": {}
+    },
+    {
+      "block_id": "ctB1",
+      "parent_id": "cellB1",
+      "block_type": 2,
+      "text": {
+        "style": {},
+        "elements": [
+          { "text_run": { "content": "列二", "text_element_style": {} } }
+        ]
+      }
+    },
+    {
+      "block_id": "cellA2",
+      "parent_id": "tbl",
+      "children": ["ctA2"],
+      "block_type": 32,
+      "table_cell": {}
+    },
+    {
+      "block_id": "ctA2",
+      "parent_id": "cellA2",
+      "block_type": 2,
+      "text": {
+        "style": {},
+        "elements": [
+          { "text_run": { "content": "a | b", "text_element_style": {} } }
+        ]
+      }
+    },
+    {
+      "block_id": "cellB2",
+      "parent_id": "tbl",
+      "children": ["ctB2"],
+      "block_type": 32,
+      "table_cell": {}
+    },
+    {
+      "block_id": "ctB2",
+      "parent_id": "cellB2",
+      "block_type": 2,
+      "text": {
+        "style": {},
+        "elements": [
+          { "text_run": { "content": "x|y", "text_element_style": { "inline_code": true } } }
+        ]
+      }
+    }
+  ]
+}

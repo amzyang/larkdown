@@ -2689,3 +2689,78 @@ func TestConvertNoUnresolvedMdRefsWhenAllResolved(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, result.UnresolvedMdRefs)
 }
+
+// backslash 转义在上传侧应按 CommonMark 语义剥掉（与下载侧 escapeMarkdownText 成对）：
+// goldmark 解析期不剥 \（留在 Text segment 原文），若不手动反转义，
+// 手写/下载产物里的 \_ 会被字面上传成 \_，块签名与远端永不收敛。
+// joinTextRunContents 拼接全部 TextRun 内容（goldmark 可能把同一段文本拆成多个 segment）
+func joinTextRunContents(elements []*lark.DocxTextElement) string {
+	var b strings.Builder
+	for _, e := range elements {
+		if e.TextRun != nil {
+			b.WriteString(e.TextRun.Content)
+		}
+	}
+	return b.String()
+}
+
+func TestConvertUnescapesBackslashEscapes(t *testing.T) {
+	result, err := ConvertMarkdownToDocxBlocks(`a \_b\_ c`, "")
+	require.NoError(t, err)
+	require.Len(t, result.TopBlocks, 1)
+	block := result.TopBlocks[0]
+	require.Equal(t, lark.DocxBlockTypeText, block.BlockType)
+	assert.Equal(t, "a _b_ c", joinTextRunContents(block.Text.Elements))
+	for _, e := range block.Text.Elements {
+		if e.TextRun != nil && e.TextRun.TextElementStyle != nil {
+			assert.False(t, e.TextRun.TextElementStyle.Italic, "转义应阻止 emphasis 解析")
+		}
+	}
+}
+
+func TestConvertUnescapedLineStartMarkers(t *testing.T) {
+	// 行首触发字符被转义后应保持 Text 块、内容还原
+	result, err := ConvertMarkdownToDocxBlocks("1\\. 不是列表\n\n\\- 也不是\n\n\\# 更不是标题", "")
+	require.NoError(t, err)
+	require.Len(t, result.TopBlocks, 3)
+	for i, want := range []string{"1. 不是列表", "- 也不是", "# 更不是标题"} {
+		block := result.TopBlocks[i]
+		assert.Equal(t, lark.DocxBlockTypeText, block.BlockType, "block %d 应保持 Text", i)
+		require.NotNil(t, block.Text, "block %d", i)
+		assert.Equal(t, want, joinTextRunContents(block.Text.Elements), "block %d", i)
+	}
+}
+
+func TestConvertBackslashKeptInCodeContexts(t *testing.T) {
+	// code span / code block 无转义语义，\ 原样保留（下载侧也不转义，双向对称）
+	result, err := ConvertMarkdownToDocxBlocks("`a\\_b`\n\n```\nx\\_y\n```", "")
+	require.NoError(t, err)
+	require.Len(t, result.TopBlocks, 2)
+	assert.Equal(t, `a\_b`, joinTextRunContents(result.TopBlocks[0].Text.Elements))
+	assert.True(t, result.TopBlocks[0].Text.Elements[0].TextRun.TextElementStyle.InlineCode)
+	assert.Equal(t, `x\_y`, joinTextRunContents(result.TopBlocks[1].Code.Elements))
+}
+
+func TestConvertUnescapeKeepsNonPunct(t *testing.T) {
+	// \+非 ASCII 标点不是 CommonMark 转义，原样保留
+	result, err := ConvertMarkdownToDocxBlocks(`路径 C:\Users\zou 和 \中`, "")
+	require.NoError(t, err)
+	require.Len(t, result.TopBlocks, 1)
+	assert.Equal(t, `路径 C:\Users\zou 和 \中`, joinTextRunContents(result.TopBlocks[0].Text.Elements))
+}
+
+func TestConvertTableCellEscapedPipe(t *testing.T) {
+	md := "| h1 | h2 |\n| --- | --- |\n| a \\| b | c |"
+	result, err := ConvertMarkdownToDocxBlocks(md, "")
+	require.NoError(t, err)
+	require.Len(t, result.DescendantGroups, 1)
+	group := result.DescendantGroups[0]
+
+	var cellTexts []string
+	for _, b := range group.Descendants {
+		if b.BlockType == lark.DocxBlockTypeText && b.Text != nil {
+			cellTexts = append(cellTexts, joinTextRunContents(b.Text.Elements))
+		}
+	}
+	assert.Contains(t, cellTexts, "a | b", "cell 内 \\| 应还原为字面 |")
+}

@@ -379,13 +379,15 @@ func parseLegacyFrontMatter(content string) (*FrontMatter, string, error) {
 
 // ExtractTitle 从 markdown 正文提取标题
 // fallback 链：ATX H1 → 首个任意级 ATX 标题 → 空字符串
+// 标题文本按 CommonMark 语义剥 backslash 转义（下载产物标题行经 escapeMarkdownText，
+// 该值流向 wiki 节点名/索引/文件名，须还原为纯文本）。
 func ExtractTitle(body string) string {
 	lines := strings.Split(body, "\n")
 	// 第一轮：找 ATX H1
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
 		if strings.HasPrefix(line, "# ") && !strings.HasPrefix(line, "## ") {
-			return strings.TrimSpace(line[2:])
+			return unescapeMarkdownText(strings.TrimSpace(line[2:]))
 		}
 	}
 	// 第二轮：找任意级别 ATX 标题
@@ -399,7 +401,7 @@ func ExtractTitle(body string) string {
 			if i < len(line) && line[i] == ' ' {
 				title := strings.TrimSpace(line[i+1:])
 				if title != "" {
-					return title
+					return unescapeMarkdownText(title)
 				}
 			}
 		}
@@ -455,7 +457,8 @@ func ExtractHeadingsFromMarkdown(body string) []Heading {
 			continue
 		}
 		if text := strings.TrimSpace(trimmed[level+1:]); text != "" {
-			headings = append(headings, Heading{Level: level, Text: text})
+			// 剥 backslash 转义：索引展示用纯文本口径（与 parser 收集侧一致）
+			headings = append(headings, Heading{Level: level, Text: unescapeMarkdownText(text)})
 		}
 	}
 	return headings

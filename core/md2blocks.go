@@ -1453,7 +1453,10 @@ func (c *converter) handleInlineHTMLTag(raw string, stack *[]htmlStyleEntry, ele
 func (c *converter) walkInline(node ast.Node, style *lark.DocxTextElementStyle, elements *[]*lark.DocxTextElement) {
 	switch n := node.(type) {
 	case *ast.Text:
-		text := string(n.Segment.Value(c.source))
+		// goldmark 解析期不剥 backslash 转义（\_ 原样留在 segment），此处按
+		// CommonMark 语义反转义，与下载侧 escapeMarkdownText 成对（签名收敛）。
+		// code span / code block / InlineMath 不走本分支，\ 原样保留。
+		text := unescapeMarkdownText(string(n.Segment.Value(c.source)))
 		if n.SoftLineBreak() {
 			text += "\n"
 		}
@@ -1817,7 +1820,7 @@ func isValidLinkURL(dest string) bool {
 	return err == nil && u.Scheme != ""
 }
 
-// extractLinkText 提取链接的文本内容
+// extractLinkText 提取链接的文本内容（纯文本语义，backslash 转义已剥）
 func extractLinkText(link *ast.Link, source []byte) string {
 	var buf strings.Builder
 	for ch := link.FirstChild(); ch != nil; ch = ch.NextSibling() {
@@ -1825,7 +1828,7 @@ func extractLinkText(link *ast.Link, source []byte) string {
 			buf.Write(t.Segment.Value(source))
 		}
 	}
-	return buf.String()
+	return unescapeMarkdownText(buf.String())
 }
 
 // extractNodeText 递归提取 goldmark AST 节点的纯文本内容

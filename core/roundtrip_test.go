@@ -139,6 +139,7 @@ func TestRoundTripSignatures(t *testing.T) {
 		{"roundtrip.mixed", ""},
 		{"roundtrip.board", ""},       // <whiteboard token> token-aware 签名：round-trip 原地保留
 		{"testdocx.nested_todos", ""}, // 尾随空块删除被跳过（等效 no-op）
+		{"testdocx.escape", ""},       // 特殊字符转义：escapeMarkdownText ↔ unescapeMarkdownText 成对收敛
 
 		// 已知不一致（白名单守边界，根因见说明）。
 		{"roundtrip.file", "File 块 [name](token)：token 非本地文件/合法 URL，上传降级纯文本（媒体无源，不可逆）"},

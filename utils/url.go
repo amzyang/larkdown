@@ -93,6 +93,28 @@ func EscapeURL(rawURL string) string {
 	return strings.ReplaceAll(url.QueryEscape(rawURL), "+", "%20")
 }
 
+// EscapeMarkdownLinkDest 对 markdown 行内链接 destination 位做最小防护：
+// 只 percent-encode 会破坏 [](...) 结构的字符（空格、括号、<>、引号、反斜杠、控制字符），
+// 其余字符（含 CJK、_、已存在的 %XX）原样保留，维持下载产物可读性。
+// destination 位不能用 backslash 转义（goldmark 会把 \ 原样带进 Destination 污染上传 URL）；
+// 块签名双侧经 UnescapeURL 归一（diff.go），encode 后仍收敛。
+func EscapeMarkdownLinkDest(dest string) string {
+	var out strings.Builder
+	out.Grow(len(dest))
+	for i := 0; i < len(dest); i++ {
+		c := dest[i]
+		if c == ' ' || c == '(' || c == ')' || c == '<' || c == '>' || c == '"' || c == '\\' || c < 0x20 || c == 0x7F {
+			const hex = "0123456789ABCDEF"
+			out.WriteByte('%')
+			out.WriteByte(hex[c>>4])
+			out.WriteByte(hex[c&0xF])
+			continue
+		}
+		out.WriteByte(c)
+	}
+	return out.String()
+}
+
 func ValidateDocumentURL(url string) (string, string, error) {
 	matchResult := reDocumentURL.FindStringSubmatch(url)
 	if matchResult == nil || len(matchResult) != 3 {

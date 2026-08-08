@@ -50,10 +50,10 @@ larkdown 已开源并发布在 Github中： https://github.com/Wsine/feishu2md
 执行 `larkdown --config` 命令会生成该工具的配置文件。生成的配置文件路径为：
 
 - Windows: %AppData%/feishu2md/config.json
-- Linux: $XDG_CONFIG_HOME/feishu2md/config.json
-- Mac: $XDG_CONFIG_HOME/feishu2md/config.json
+- Linux: \$XDG_CONFIG_HOME/feishu2md/config.json
+- Mac: \$XDG_CONFIG_HOME/feishu2md/config.json
 
-如无配置 XDG_CONFIG_HOME 环境变量，则默认为 ~/.config 目录
+如无配置 XDG_CONFIG_HOME 环境变量，则默认为 \~/.config 目录
 
 将 App ID 和 App Secret 填入配置文件 config.json 中的相应位置。另外，image_dir 配置项为存放文档中图片的文件夹名称。
 
@@ -77,6 +77,6 @@ larkdown <cite type="doc" doc-id="doccnrOvzeQ8BSnfsXj8jwJHC3c" obj-type="doc" hr
 
 由于 lark_docs_md 是使用 golang 实现的，因此这也是我首次使用 golang 进行开发。对于开发小工具，整体的开发体验非常良好，而且还能编译得到二进制以及享受多平台编译的好处。工具可能还有一些不是很完善的地方，如有问题可以提 issue，我有时间会进行修复的。
 
-最后，欢迎试用，欢迎 PR ~
+最后，欢迎试用，欢迎 PR \~
 
 

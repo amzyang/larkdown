@@ -34,3 +34,30 @@ func TestEscapeURLStyleMatchesFeishu(t *testing.T) {
 	assert.Equal(t, "https%3A%2F%2Fx.feishu.cn%2Fdocx%2FT1",
 		EscapeURL("https://x.feishu.cn/docx/T1"))
 }
+
+// markdown 行内链接 destination 位的防护集：只 encode 会破坏 [](...) 结构的字符，
+// 其余（含 CJK、_、已有 %XX）原样保留。块签名双侧过 UnescapeURL 归一，encode 不引入漂移。
+func TestEscapeMarkdownLinkDest(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"space", "https://a.com/x y", "https://a.com/x%20y"},
+		{"parens", "https://a.com/x(1)", "https://a.com/x%281%29"},
+		{"angle", "https://a.com/<x>", "https://a.com/%3Cx%3E"},
+		{"quote", `https://a.com/x"y`, "https://a.com/x%22y"},
+		{"backslash", `https://a.com/x\y`, "https://a.com/x%5Cy"},
+		{"newline", "https://a.com/x\ny", "https://a.com/x%0Ay"},
+		{"underscore kept", "https://a.com/_abc", "https://a.com/_abc"},
+		{"cjk kept", "https://a.com/中文", "https://a.com/中文"},
+		{"percent kept", "https://a.com/x%20y", "https://a.com/x%20y"},
+		{"lone percent kept", "https://a.com/100%", "https://a.com/100%"},
+		{"empty", "", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, EscapeMarkdownLinkDest(tt.in))
+		})
+	}
+}

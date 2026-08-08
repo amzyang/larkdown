@@ -29,6 +29,11 @@ type Parser struct {
 	prefixURL   string            // 域名前缀（如 https://feishu.cn）
 	objEditTime string            // Wiki 节点编辑时间（用于白板缓存）
 	userNames   map[string]string // MentionUser OpenID → 显示名
+
+	// 渲染上下文（随块递归 save/restore，见 escape.go 的转义规则）
+	rawInline     bool // code/equation/summary/cell-<pre>：内容不做 markdown 转义
+	inTableCell   bool // GFM cell：| 全位置转义、无行首语义
+	elemLineStart bool // 当前 TextRun 是否处于行首（parseBlockTextCtx 逐元素维护）
 }
 
 func NewParser(config OutputConfig, client *Client) *Parser {
@@ -286,14 +291,14 @@ func (p *Parser) ParseDocxBlock(b *lark.DocxBlock, indentLevel int) string {
 		buf.WriteString(p.ParseDocxBlockOrdered(b, indentLevel))
 	case lark.DocxBlockTypeCode:
 		buf.WriteString("```" + DocxCodeLang2MdStr[b.Code.Style.Language] + "\n")
-		buf.WriteString(strings.TrimSpace(p.ParseDocxBlockText(b.Code)))
+		buf.WriteString(strings.TrimSpace(p.parseBlockTextRaw(b.Code)))
 		buf.WriteString("\n```\n")
 	case lark.DocxBlockTypeQuote:
 		buf.WriteString("> ")
 		buf.WriteString(p.ParseDocxBlockText(b.Quote))
 	case lark.DocxBlockTypeEquation:
 		buf.WriteString("$$\n")
-		buf.WriteString(p.ParseDocxBlockText(b.Equation))
+		buf.WriteString(p.parseBlockTextRaw(b.Equation))
 		buf.WriteString("\n$$\n")
 	case lark.DocxBlockTypeTodo:
 		if b.Todo.Style.Done {
@@ -301,7 +306,8 @@ func (p *Parser) ParseDocxBlock(b *lark.DocxBlock, indentLevel int) string {
 		} else {
 			buf.WriteString("- [ ] ")
 		}
-		buf.WriteString(p.ParseDocxBlockText(b.Todo))
+		// checkbox 标记同行在前，todo 文本不处于行首
+		buf.WriteString(p.parseBlockTextCtx(b.Todo, false))
 		buf.WriteString(p.renderListItemChildren(b))
 	case lark.DocxBlockTypeDivider:
 		buf.WriteString("---\n")
@@ -343,7 +349,7 @@ func (p *Parser) ParseDocxBlockPage(b *lark.DocxBlock) string {
 	buf := new(strings.Builder)
 
 	buf.WriteString("# ")
-	buf.WriteString(p.ParseDocxBlockText(b.Page))
+	buf.WriteString(p.parseBlockTextCtx(b.Page, false))
 	buf.WriteString("\n")
 
 	buf.WriteString(p.parseSiblingBlocks(b.Children))
@@ -390,7 +396,7 @@ func isSameFamilyList(a, b *lark.DocxBlock) bool {
 func (p *Parser) ParseDocxBlockFolded(b *lark.DocxBlock) string {
 	buf := new(strings.Builder)
 	buf.WriteString("<details>\n<summary>")
-	text := strings.TrimRight(p.ParseDocxBlockText(b.Text), "\n")
+	text := strings.TrimRight(p.parseBlockTextRaw(b.Text), "\n")
 	buf.WriteString(text)
 	buf.WriteString("</summary>\n\n")
 	for _, childId := range b.Children {
@@ -402,14 +408,36 @@ func (p *Parser) ParseDocxBlockFolded(b *lark.DocxBlock) string {
 }
 
 func (p *Parser) ParseDocxBlockText(b *lark.DocxBlockText) string {
+	return p.parseBlockTextCtx(b, true)
+}
+
+// parseBlockTextCtx 渲染块内全部行内元素。lineStart 表示首个元素是否处于行首
+// （段落/引用/列表项内容为 true；标题、todo 的 checkbox 之后为 false），
+// 决定块级触发字符的行首转义；元素内含 \n 时后续行始终按行首处理（escape.go）。
+func (p *Parser) parseBlockTextCtx(b *lark.DocxBlockText, lineStart bool) string {
 	buf := new(strings.Builder)
 	numElem := len(b.Elements)
 	for _, e := range b.Elements {
 		inline := numElem > 1
-		buf.WriteString(p.ParseDocxTextElement(e, inline))
+		p.elemLineStart = lineStart
+		s := p.ParseDocxTextElement(e, inline)
+		buf.WriteString(s)
+		if s != "" {
+			lineStart = strings.HasSuffix(s, "\n")
+		}
 	}
 	buf.WriteString("\n")
 	return buf.String()
+}
+
+// parseBlockTextRaw 以 raw 上下文渲染：code/equation/summary/cell-<pre> 的内容
+// 不做 markdown 转义（代码上下文无转义语义，双向对称；summary 上传侧裸串回填）。
+func (p *Parser) parseBlockTextRaw(b *lark.DocxBlockText) string {
+	prev := p.rawInline
+	p.rawInline = true
+	s := p.parseBlockTextCtx(b, false)
+	p.rawInline = prev
+	return s
 }
 
 // calloutColorToType 将飞书 callout 背景色映射到 GitHub Alerts 类型
@@ -501,8 +529,10 @@ func (p *Parser) ParseDocxTextElementTextRun(tr *lark.DocxTextElementTextRun) st
 			closers = append(closers, "`")
 		} else {
 			if link := style.Link; link != nil {
+				// destination 位：解码保可读，再对会破坏 [](...) 结构的字符做 percent-encode
+				// 防护（签名双侧过 UnescapeURL 归一，不引入漂移）
 				openers = append(openers, "[")
-				closers = append(closers, fmt.Sprintf("](%s)", utils.UnescapeURL(link.URL)))
+				closers = append(closers, fmt.Sprintf("](%s)", utils.EscapeMarkdownLinkDest(utils.UnescapeURL(link.URL))))
 				p.collectRef(DocRefFromLink(utils.UnescapeURL(link.URL), tr.Content))
 			}
 			if style.Bold {
@@ -559,6 +589,26 @@ func (p *Parser) ParseDocxTextElementTextRun(tr *lark.DocxTextElementTextRun) st
 		}
 	}
 
+	// markdown 转义（与上传侧 unescapeMarkdownText 成对，签名收敛）。
+	// raw 上下文（code/equation/summary/cell-<pre>）不转义；InlineCode 内容仅在
+	// cell 上下文转义 |（goldmark table 扩展会剥 code span 内的 \|，天然收敛）。
+	if !p.rawInline {
+		if isInlineCode {
+			if p.inTableCell {
+				content = strings.ReplaceAll(content, "|", `\|`)
+			}
+		} else {
+			content = escapeMarkdownText(content, escapeContext{
+				// 行首防护仅对无标记元素：styled 元素的 opener 已占据行首位置
+				atLineStart: p.elemLineStart && len(openers) == 0,
+				inTableCell: p.inTableCell,
+				// 链接文本内 linkify 短路（goldmark IsInLinkLabel），全量转义；
+				// 纯文本裸 URL 转义会把 linkify 链接截成两半，跳过
+				skipBareURLs: tr.TextElementStyle == nil || tr.TextElementStyle.Link == nil,
+			})
+		}
+	}
+
 	buf.WriteString(lead)
 	for _, o := range openers {
 		buf.WriteString(o)
@@ -585,7 +635,8 @@ func (p *Parser) ParseDocxBlockHeading(b *lark.DocxBlock, headingLevel int) stri
 	plainText := p.extractHeadingPlainText(blockText)
 	p.Headings = append(p.Headings, Heading{Level: headingLevel, Text: plainText})
 
-	buf.WriteString(p.ParseDocxBlockText(blockText))
+	// ATX 标记之后为行内上下文，块级触发字符无行首活性
+	buf.WriteString(p.parseBlockTextCtx(blockText, false))
 
 	for _, childId := range b.Children {
 		childBlock := p.blockMap[childId]
@@ -745,7 +796,7 @@ func (p *Parser) renderCellChild(b *lark.DocxBlock) string {
 		if lang := DocxCodeLang2MdStr[b.Code.Style.Language]; lang != "" {
 			openTag = `<pre lang="` + lang + `">`
 		}
-		content := strings.TrimSpace(p.ParseDocxBlockText(b.Code))
+		content := strings.TrimSpace(p.parseBlockTextRaw(b.Code))
 		return openTag + escapeCellHTMLText(content) + "</pre>"
 	}
 	content := strings.TrimRight(p.ParseDocxBlock(b, 0), "\n")
@@ -753,10 +804,13 @@ func (p *Parser) renderCellChild(b *lark.DocxBlock) string {
 }
 
 func (p *Parser) ParseDocxBlockTableCell(b *lark.DocxBlock) string {
+	prev := p.inTableCell
+	p.inTableCell = true
 	parts := make([]string, 0, len(b.Children))
 	for _, child := range b.Children {
 		parts = append(parts, p.renderCellChild(p.blockMap[child]))
 	}
+	p.inTableCell = prev
 	return strings.Join(parts, "<br/>")
 }
 
