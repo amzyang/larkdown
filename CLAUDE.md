@@ -53,6 +53,21 @@ just clean          # 删除构建产物
 
 另：download 覆写本地已有文件时，代码块围栏按**上传等价枚举**保留本地拼写（`core/preserve_fence.go` 的 `PreserveLocalFenceInfo`，issue #7）——本地 ` ```jsonc ` 与远端 JSON 枚举等价则不改写为规范名 `json`，与上传侧块签名按枚举 id 判等的语义对称；`mermaid`/`plantuml` 走特殊通道不参与。
 
+### 下载侧文本转义（escape ↔ unescape 对偶）
+
+飞书正文含 markdown 活性字符时下载产物零转义会破损/上传块类型翻转。机制成对（缺一侧签名必不收敛）：
+
+- **下载侧** `escapeMarkdownText`（`core/escape.go`，`ParseDocxTextElementTextRun` 单漏斗接入，覆盖正文/标题/列表/todo/callout/链接文本）：行内集 `\ * `` ` `` [ ] ~ < $` 任意位置 backslash 转义；`_` 仅非 intraword（两侧非字母数字才转，`snake_case`/CJK 词内零噪音）；行首集（含 TextRun 内 `\n` 后的行首，仅无样式标记元素）`# - + > | =`、数字串后 `.`/`)` 防块级翻转（`- ` 变列表、`[!NOTE]` 变 Callout、`[ ] ` 变 Todo、`===` 变 setext）；cell 上下文 `|` 全位置转 `\|`（GFM 标准，goldmark table 扩展原生支持，code span 内的 `\|` 由 goldmark 自己剥）。**不转义**：`& ! ( )`（无行内活性；goldmark 无 inline entity parser，`&` 转义反而不收敛）。
+- **上传侧** `unescapeMarkdownText`（`walkInline` 的 `*ast.Text` 单点 + `extractLinkText` + `ExtractTitle`/`ExtractHeadingsFromMarkdown`）：goldmark **解析期不剥反斜杠**（`\_` 原样留在 Text segment），须手动按 CommonMark 剥 `\`+ASCII 标点；`\`+非标点原样保留。这同时修复了手写 markdown 的 `\_` 被字面上传的旧 bug。
+- **raw 豁免上下文**（`Parser.rawInline`，双向对称不转义）：code 块、equation 块、`<summary>`（上传侧裸串回填）、cell `<pre>`（已有 entity 通道，防双重转义）、mermaid。InlineCode 内容仅 cell 场景转 `|`。
+- **URL destination 位不能用 backslash**（goldmark 会把 `\` 原样带进 Destination 污染上传 URL）：`utils.EscapeMarkdownLinkDest` 对解码后 URL 做最小 percent-encode 防护（空格/`()`/`<>`/`"`/`\`/控制字符），块签名双侧过 `UnescapeURL` 归一不漂移。**本地路径** destination（file/图片素材、索引 RelPath）不能 percent-encode（上传侧按原始路径查文件），含空格/括号用 `<...>` 尖括号 destination 包裹（`utils.QuoteLinkDestIfNeeded`）。
+- **裸 URL span 刻意跳过转义**（`https?://`、`www.` 起始，仅无 Link 样式的纯文本）：linkify 的 URL 正则不含 `\`，转义会把链接截成两半（比现状更糟）；链接 label 内 linkify 短路（goldmark `IsInLinkLabel`），照常全量转义——报告 bug 的 `[https://example.com/_abc](…)` 场景由此修复。
+- **entity 通道**（与 backslash 通道并存，各有解码点勿混用）：cell `<pre>` 用 `escapeCellHTMLText`↔`cellHTMLTextUnescaper`；`<cite>` 内文本用 `xmlEscapeText`（markdown 活性字符实体化）↔ `flushCite` 的 `html.UnescapeString`。
+- **围栏防提前闭合**：代码块围栏按内容动态加长（`codeFence`，max(3, 最长反引号 run+1)），内容含 ``` 不再逃逸。
+- 回归锚：`testdocx.escape` fixture 同时锁 parser golden 与 round-trip 签名全 Equal。
+
+**已知豁免**（修复成本/收益不匹配或需独立设计，改动相关逻辑时注意别顺手"修复"造成签名漂移）：裸 URL 的 linkify 签名漂移（上传后多出 Link 样式，存量行为）；公式内容含 `$`/首尾空格/换行（MathExtension 语法边界）；TextRun 内 `\n` 逃逸 heading/quote/list 结构（需续行前缀机制）；评论附录 marker 与正文碰撞（`docmeta.go` 的 `commentsAppendixMarker` 朴素子串匹配）；`ExtractTitle`/`RemoveFirstHeading` 不跳代码围栏；`<details>` summary 含 `</summary>` 字面量；heading 7-9 级超出 CommonMark 上限；行首 ≥4 空格成 indented code；inline code 含反引号（testdocx.2 白名单）；cell 文本以 `\` 结尾（goldmark table 边界扫描 quirk）。
+
 ### 增量更新的块更新策略（uploader/diff）
 
 `incrementalUpdate`（`uploader.go`）对变化的块按「能否原地更新」**三档分流**，**优先保留 block_id**（不破坏协作光标 / 评论锚点）：`ComputeDiff`(LCS) → `PairBlocks` 把同一变更区域的 delete+insert 配对（`diff.go`）→ 按档执行。
