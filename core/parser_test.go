@@ -54,3 +54,24 @@ func TestParseDocxContent(t *testing.T) {
 		})
 	}
 }
+
+// 代码块内容含 ``` 行时固定三反引号围栏会被提前闭合（内容逃逸为正文），
+// 围栏须按内容最长反引号 run 动态加长。
+func TestParseDocxBlockCodeFenceLengthens(t *testing.T) {
+	block := &lark.DocxBlock{
+		BlockID:   "c1",
+		BlockType: lark.DocxBlockTypeCode,
+		Code: &lark.DocxBlockText{
+			Style: &lark.DocxTextStyle{},
+			Elements: []*lark.DocxTextElement{
+				{TextRun: &lark.DocxTextElementTextRun{
+					Content:          "outer:\n```js\ncode\n```",
+					TextElementStyle: &lark.DocxTextElementStyle{},
+				}},
+			},
+		},
+	}
+	parser := core.NewParser(core.NewConfig("", "").Output, nil)
+	got := parser.ParseDocxBlock(block, 0)
+	assert.Equal(t, "````\nouter:\n```js\ncode\n```\n````\n", got)
+}

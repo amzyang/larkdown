@@ -84,7 +84,7 @@ Typora only supports fences in GitHub Flavored Markdown. Original code blocks in
 
 Using fences is easy: Input \`\`\` and press `return`. Add an optional language identifier after \`\`\` and we'll run it through syntax highlighting:
 
-```
+````
 Here's an example:
 
 ```js
@@ -99,7 +99,7 @@ require 'redcarpet'
 markdown = Redcarpet.new("Hello World!")
 puts markdown.to_html
 ```
-```
+````
 
 ### Math Blocks
 

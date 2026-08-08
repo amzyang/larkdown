@@ -290,9 +290,11 @@ func (p *Parser) ParseDocxBlock(b *lark.DocxBlock, indentLevel int) string {
 	case lark.DocxBlockTypeOrdered:
 		buf.WriteString(p.ParseDocxBlockOrdered(b, indentLevel))
 	case lark.DocxBlockTypeCode:
-		buf.WriteString("```" + DocxCodeLang2MdStr[b.Code.Style.Language] + "\n")
-		buf.WriteString(strings.TrimSpace(p.parseBlockTextRaw(b.Code)))
-		buf.WriteString("\n```\n")
+		code := strings.TrimSpace(p.parseBlockTextRaw(b.Code))
+		fence := codeFence(code)
+		buf.WriteString(fence + DocxCodeLang2MdStr[b.Code.Style.Language] + "\n")
+		buf.WriteString(code)
+		buf.WriteString("\n" + fence + "\n")
 	case lark.DocxBlockTypeQuote:
 		buf.WriteString("> ")
 		buf.WriteString(p.ParseDocxBlockText(b.Quote))
@@ -1166,14 +1168,36 @@ func (p *Parser) renderMermaidAddOn(data string) string {
 	if data == "" {
 		return ""
 	}
+	fence := codeFence(data)
 	buf := new(strings.Builder)
-	buf.WriteString("```mermaid\n")
+	buf.WriteString(fence + "mermaid\n")
 	buf.WriteString(data)
 	if !strings.HasSuffix(data, "\n") {
 		buf.WriteString("\n")
 	}
-	buf.WriteString("```\n")
+	buf.WriteString(fence + "\n")
 	return buf.String()
+}
+
+// codeFence 返回不会被内容提前闭合的围栏：内容含 N 个连续反引号时用
+// max(3, N+1) 个（CommonMark 闭合围栏须不短于开围栏，加长即免疫）。
+func codeFence(content string) string {
+	longest, run := 0, 0
+	for i := 0; i < len(content); i++ {
+		if content[i] == '`' {
+			run++
+			if run > longest {
+				longest = run
+			}
+		} else {
+			run = 0
+		}
+	}
+	n := 3
+	if longest >= 3 {
+		n = longest + 1
+	}
+	return strings.Repeat("`", n)
 }
 
 // CollectMentionUserIDs 从 blocks 中收集所有 MentionUser 的 UserID
