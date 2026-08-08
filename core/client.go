@@ -848,10 +848,9 @@ func (c *Client) GetSheetContent(ctx context.Context, sheetToken string) (*Sheet
 	for i, row := range values {
 		result[i] = make([]string, len(row))
 		for j, cell := range row {
-			// 根据单元格类型提取值
+			// 根据单元格类型提取值（sheetCellText 保证 GFM cell 单行且 | 不切列）
 			if cell.String != nil {
-				// 将换行符转换为 <br> 标签，以便在 markdown 表格中正确显示
-				result[i][j] = strings.ReplaceAll(*cell.String, "\n", "<br>")
+				result[i][j] = sheetCellText(*cell.String)
 			} else if cell.Int != nil {
 				result[i][j] = fmt.Sprintf("%d", *cell.Int)
 			} else if cell.Float != nil {
@@ -859,18 +858,19 @@ func (c *Client) GetSheetContent(ctx context.Context, sheetToken string) (*Sheet
 				result[i][j] = fmt.Sprintf("%g", *cell.Float)
 			} else if cell.Link != nil {
 				// 超链接：保留 URL 渲染成 markdown 链接，丢弃 URL 等于丢失最关键的信息
-				text := strings.ReplaceAll(cell.Link.Text, "\n", "<br>")
+				text := sheetCellText(cell.Link.Text)
 				if cell.Link.Link != "" {
-					result[i][j] = fmt.Sprintf("[%s](%s)", text, cell.Link.Link)
+					dest := strings.ReplaceAll(utils.EscapeMarkdownLinkDest(cell.Link.Link), "|", "%7C")
+					result[i][j] = fmt.Sprintf("[%s](%s)", text, dest)
 				} else {
 					result[i][j] = text
 				}
 			} else if cell.Formula != nil {
 				// 公式类型，Text 字段存储公式本身
-				result[i][j] = cell.Formula.Text
+				result[i][j] = sheetCellText(cell.Formula.Text)
 			} else if cell.AtUser != nil {
 				// 标记 @ 人，加前缀让读者知道这是提及
-				result[i][j] = "@" + cell.AtUser.Text
+				result[i][j] = "@" + sheetCellText(cell.AtUser.Text)
 			} else if cell.AtDoc != nil {
 				// @ 文档：Text 是 token，ObjType 是 doc/sheet/slide/bitable/mindnote。
 				// 渲染成可点击的 markdown 链接（飞书会自动重定向到当前租户子域）
@@ -886,14 +886,14 @@ func (c *Client) GetSheetContent(ctx context.Context, sheetToken string) (*Sheet
 				if name == "" {
 					name = cell.EmbedImage.FileToken
 				}
-				result[i][j] = "🖼️ " + name
+				result[i][j] = "🖼️ " + sheetCellText(name)
 			} else if cell.Attachment != nil {
 				// 附件：当前不下载，至少给出占位
 				name := cell.Attachment.Text
 				if name == "" {
 					name = cell.Attachment.FileToken
 				}
-				result[i][j] = "📎 " + name
+				result[i][j] = "📎 " + sheetCellText(name)
 			} else if cell.MultiValue != nil && len(cell.MultiValue.Values) > 0 {
 				// 下拉列表，可能有多个值
 				cellValues := make([]string, len(cell.MultiValue.Values))
@@ -914,7 +914,7 @@ func (c *Client) GetSheetContent(ctx context.Context, sheetToken string) (*Sheet
 						cellValues[k] = fmt.Sprintf("%v", val)
 					}
 				}
-				result[i][j] = strings.Join(cellValues, ", ")
+				result[i][j] = sheetCellText(strings.Join(cellValues, ", "))
 			} else {
 				result[i][j] = ""
 			}
@@ -1107,7 +1107,7 @@ func (c *Client) GetBitableContent(ctx context.Context, bitableToken string) ([]
 	if len(fieldResp.Items) > 0 {
 		var header []string
 		for _, field := range fieldResp.Items {
-			header = append(header, field.FieldName)
+			header = append(header, sheetCellText(field.FieldName))
 		}
 		result = append(result, header)
 	}
@@ -1119,8 +1119,8 @@ func (c *Client) GetBitableContent(ctx context.Context, bitableToken string) ([]
 			for _, field := range fieldResp.Items {
 				// 从记录中获取字段值（飞书 API 返回的 Fields map 使用 FieldName 作为 key）
 				if value, ok := record.Fields[field.FieldName]; ok {
-					// 将值转换为字符串
-					row = append(row, fmt.Sprintf("%v", value))
+					// 将值转换为字符串（bitable 字段值是任意 JSON，可能含 | 与换行）
+					row = append(row, sheetCellText(fmt.Sprintf("%v", value)))
 				} else {
 					row = append(row, "")
 				}
@@ -1130,6 +1130,14 @@ func (c *Client) GetBitableContent(ctx context.Context, bitableToken string) ([]
 	}
 
 	return result, nil
+}
+
+// sheetCellText 把电子表格/多维表格 cell 文本折叠为 GFM 表格 cell 安全形态：
+// 换行折 <br>（cell 单行约束）、| → \|（GFM 标准 cell 内竖线转义，防切列）。
+// 这些块下载即静态导出、不参与 round-trip，纯显示防护。
+func sheetCellText(s string) string {
+	s = strings.ReplaceAll(s, "\n", "<br>")
+	return strings.ReplaceAll(s, "|", `\|`)
 }
 
 // DownloadWhiteboardImage 下载白板为图片

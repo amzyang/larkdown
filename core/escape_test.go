@@ -104,3 +104,18 @@ func TestUnescapeMarkdownText(t *testing.T) {
 		})
 	}
 }
+
+// 电子表格/多维表格 cell 值进 GFM 表格行：| 不转义会切列、换行会断行。
+func TestSheetCellText(t *testing.T) {
+	tests := []struct{ in, want string }{
+		{"a | b", `a \| b`},
+		{"多行\n值", "多行<br>值"},
+		{"=IF(A1>0, \"x|y\", B1)\n", `=IF(A1>0, "x\|y", B1)<br>`},
+		{"plain", "plain"},
+	}
+	for _, tt := range tests {
+		if got := sheetCellText(tt.in); got != tt.want {
+			t.Errorf("sheetCellText(%q) = %q, want %q", tt.in, got, tt.want)
+		}
+	}
+}
