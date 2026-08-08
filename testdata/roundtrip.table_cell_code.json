@@ -1,0 +1,87 @@
+{
+  "document": {
+    "document_id": "ROOTDOC",
+    "title": "Title"
+  },
+  "blocks": [
+    {
+      "block_id": "ROOTDOC",
+      "children": ["tbl"],
+      "block_type": 1,
+      "page": {
+        "style": {},
+        "elements": [
+          {
+            "text_run": {
+              "content": "Title",
+              "text_element_style": {}
+            }
+          }
+        ]
+      }
+    },
+    {
+      "block_id": "tbl",
+      "parent_id": "ROOTDOC",
+      "children": ["cellA", "cellB"],
+      "block_type": 31,
+      "table": {
+        "cells": ["cellA", "cellB"],
+        "property": {
+          "row_size": 1,
+          "column_size": 2,
+          "column_width": [100, 100]
+        }
+      }
+    },
+    {
+      "block_id": "cellA",
+      "parent_id": "tbl",
+      "children": ["ctA"],
+      "block_type": 32,
+      "table_cell": {}
+    },
+    {
+      "block_id": "ctA",
+      "parent_id": "cellA",
+      "block_type": 2,
+      "text": {
+        "style": {},
+        "elements": [
+          {
+            "text_run": {
+              "content": "hello",
+              "text_element_style": {}
+            }
+          }
+        ]
+      }
+    },
+    {
+      "block_id": "cellB",
+      "parent_id": "tbl",
+      "children": ["codB"],
+      "block_type": 32,
+      "table_cell": {}
+    },
+    {
+      "block_id": "codB",
+      "parent_id": "cellB",
+      "block_type": 14,
+      "code": {
+        "style": {
+          "language": 30,
+          "wrap": false
+        },
+        "elements": [
+          {
+            "text_run": {
+              "content": "{\n}",
+              "text_element_style": {}
+            }
+          }
+        ]
+      }
+    }
+  ]
+}

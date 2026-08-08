@@ -49,6 +49,8 @@ just clean          # 删除构建产物
 
 注意：CLI `larkdown upload` 路径不依赖此排版规则（goldmark 把 tight/loose list 等价处理）；此策略仅服务于"网页粘贴"这条 round-trip 通道。
 
+**表格单元格内代码块**：GFM cell 是单行行内上下文，容不下围栏代码块。下载侧渲染为 `<pre lang="x">…</pre>`（换行→`<br/>`，`&`/`<`/`|` 及 markdown 行内活性字符实体化，`parser.go` 的 `escapeCellHTMLText`）；上传侧两条解码路径都还原为 cell 内真 Code 子块（飞书 descendant API 接受 `table_cell→code`，已 E2E 验证）：GFM 表格走 `splitCellSegments`（`md2blocks.go`），goldmark **不在 AST 层解码 entity**（Text 节点保留原文），故用 `cellHTMLTextUnescaper` 手动成对反转义；合并单元格的 HTML `<table>` 走 `extractCellContent`/`extractPreText`（`md2blocks_html.go`，entity 由 x/net/html 自动解码，`<br>` 还原换行）。cell 其他子块换行同样折为 `<br/>` 不再丢弃；回归锚：`roundtrip.table_cell_code` fixture（签名收敛）。
+
 另：download 覆写本地已有文件时，代码块围栏按**上传等价枚举**保留本地拼写（`core/preserve_fence.go` 的 `PreserveLocalFenceInfo`，issue #7）——本地 ` ```jsonc ` 与远端 JSON 枚举等价则不改写为规范名 `json`，与上传侧块签名按枚举 id 判等的语义对称；`mermaid`/`plantuml` 走特殊通道不参与。
 
 ### 增量更新的块更新策略（uploader/diff）

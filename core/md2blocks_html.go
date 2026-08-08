@@ -626,6 +626,12 @@ func (c *converter) convertHTMLTable(n *html.Node) {
 				})
 			} else {
 				for _, seg := range cell.segments {
+					if seg.code {
+						codeID := c.idGen.next("html_cell_code")
+						childIDs = append(childIDs, codeID)
+						childDescs = append(childDescs, newCodeBlock(codeID, seg.lang, seg.text))
+						continue
+					}
 					if seg.imagePath != "" {
 						imgID := c.idGen.next("html_cell_img")
 						childIDs = append(childIDs, imgID)
@@ -826,10 +832,12 @@ func extractInlineTextRecursive(node ast.Node, source []byte, buf *strings.Build
 
 // --- Table cell content extraction ---
 
-// cellSegment 表示单元格中的一段内容（文本或图片）
+// cellSegment 表示单元格中的一段内容（文本、图片或代码块）
 type cellSegment struct {
-	text      string // 非空 = 文本段
+	text      string // 文本段内容；code=true 时为代码内容
 	imagePath string // 非空 = 图片
+	code      bool   // true = <pre> 代码段（下载侧 cell 内代码块的往返表示）
+	lang      string // 代码段语言（<pre lang> 或 <code class="language-x">）
 }
 
 // cellContent 表示单元格中的所有内容段
@@ -855,13 +863,37 @@ func extractCellContent(n *html.Node) cellContent {
 			textBuf.WriteString(node.Data)
 			return
 		}
-		if node.Type == html.ElementNode && node.DataAtom == atom.Img {
-			flushText()
-			src := getAttr(node, "src")
-			if src != "" {
-				result.segments = append(result.segments, cellSegment{imagePath: src})
+		if node.Type == html.ElementNode {
+			switch node.DataAtom {
+			case atom.Img:
+				flushText()
+				src := getAttr(node, "src")
+				if src != "" {
+					result.segments = append(result.segments, cellSegment{imagePath: src})
+				}
+				return
+			case atom.Br:
+				textBuf.WriteString("\n")
+				return
+			case atom.Pre:
+				flushText()
+				lang := getAttr(node, "lang")
+				if lang == "" {
+					// 回退 <pre><code class="language-x"> 形态（与 convertHTMLPre 对齐）
+					for child := node.FirstChild; child != nil; child = child.NextSibling {
+						if child.Type == html.ElementNode && child.DataAtom == atom.Code {
+							lang, _ = strings.CutPrefix(getAttr(child, "class"), "language-")
+							break
+						}
+					}
+				}
+				result.segments = append(result.segments, cellSegment{
+					text: extractPreText(node),
+					code: true,
+					lang: lang,
+				})
+				return
 			}
-			return
 		}
 		for child := node.FirstChild; child != nil; child = child.NextSibling {
 			walk(child)
@@ -870,6 +902,29 @@ func extractCellContent(n *html.Node) cellContent {
 	walk(n)
 	flushText()
 	return result
+}
+
+// extractPreText 提取 <pre> 的代码文本，<br> 还原为换行（entity 已由 x/net/html 解码）。
+func extractPreText(n *html.Node) string {
+	var buf strings.Builder
+	var walk func(*html.Node)
+	walk = func(node *html.Node) {
+		if node.Type == html.TextNode {
+			buf.WriteString(node.Data)
+			return
+		}
+		if node.Type == html.ElementNode && node.DataAtom == atom.Br {
+			buf.WriteString("\n")
+			return
+		}
+		for child := node.FirstChild; child != nil; child = child.NextSibling {
+			walk(child)
+		}
+	}
+	for child := n.FirstChild; child != nil; child = child.NextSibling {
+		walk(child)
+	}
+	return strings.TrimSuffix(buf.String(), "\n")
 }
 
 // --- 辅助函数 ---

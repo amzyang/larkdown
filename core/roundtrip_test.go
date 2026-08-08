@@ -129,6 +129,8 @@ func TestRoundTripSignatures(t *testing.T) {
 		{"roundtrip.list_child_multipara", ""},   // 列表项内第二段落作为 text child
 		{"roundtrip.list_child_divider", ""},     // 列表项内分隔线作为 divider child
 		{"roundtrip.list_child_quote_table", ""}, // 列表项内引用块/表格作为 quote_container/table child
+		{"roundtrip.table_cell_code", ""},        // 表格单元格内代码块：<pre lang> 表示往返（issue：cell 内 code 换行丢失）
+		{"roundtrip.table_cell_code_merged", ""}, // 合并单元格表格内代码块：HTML <table> 路径往返
 		{"roundtrip.link", ""},
 		{"roundtrip.mermaid", ""},
 		{"roundtrip.quote15", ""},

@@ -711,16 +711,53 @@ func (p *Parser) ParseDocxBlockOrdered(b *lark.DocxBlock, indentLevel int) strin
 	return buf.String()
 }
 
-func (p *Parser) ParseDocxBlockTableCell(b *lark.DocxBlock) string {
-	buf := new(strings.Builder)
+// cellHTMLTextEscaper 把单元格内嵌 HTML（如 <pre>）的文本编码为单行安全形式：
+// & → &amp;、< → &lt;（防 </pre> 字面量提前闭合）、| → &#124;（GFM 按原始文本
+// 的 | 切分 cell）、\n → <br/>（cell 单行约束）；其余为 markdown 行内活性字符
+// （code span/强调/链接/删除线/转义/行内数学式），实体化防止上传侧在 <pre> 标签
+// 之间继续做行内解析时误成结构。上传侧解码：entity 由 goldmark 解析（ast.String），
+// <br/> 还原换行。Replacer 单遍替换，无需关心顺序。
+var cellHTMLTextEscaper = strings.NewReplacer(
+	"&", "&amp;",
+	"<", "&lt;",
+	"|", "&#124;",
+	"\n", "<br/>",
+	"`", "&#96;",
+	"*", "&#42;",
+	"_", "&#95;",
+	"[", "&#91;",
+	"]", "&#93;",
+	"~", "&#126;",
+	"\\", "&#92;",
+	"$", "&#36;",
+)
 
-	for _, child := range b.Children {
-		block := p.blockMap[child]
-		content := p.ParseDocxBlock(block, 0)
-		buf.WriteString(content + "<br/>")
+func escapeCellHTMLText(s string) string {
+	return cellHTMLTextEscaper.Replace(s)
+}
+
+// renderCellChild 以 cell 上下文渲染单个子块。GFM 表格 cell 是单行行内上下文，
+// 容不下围栏代码块：code 块渲染为 <pre lang="x"> 单行形式（GitHub 惯例，上传侧
+// 还原为 cell 内 Code 子块）；其余块常规渲染后把内部换行折为 <br/>，不再丢弃。
+func (p *Parser) renderCellChild(b *lark.DocxBlock) string {
+	if b != nil && b.BlockType == lark.DocxBlockTypeCode {
+		openTag := "<pre>"
+		if lang := DocxCodeLang2MdStr[b.Code.Style.Language]; lang != "" {
+			openTag = `<pre lang="` + lang + `">`
+		}
+		content := strings.TrimSpace(p.ParseDocxBlockText(b.Code))
+		return openTag + escapeCellHTMLText(content) + "</pre>"
 	}
+	content := strings.TrimRight(p.ParseDocxBlock(b, 0), "\n")
+	return strings.ReplaceAll(content, "\n", "<br/>")
+}
 
-	return buf.String()
+func (p *Parser) ParseDocxBlockTableCell(b *lark.DocxBlock) string {
+	parts := make([]string, 0, len(b.Children))
+	for _, child := range b.Children {
+		parts = append(parts, p.renderCellChild(p.blockMap[child]))
+	}
+	return strings.Join(parts, "<br/>")
 }
 
 func (p *Parser) ParseDocxBlockTable(t *lark.DocxBlockTable) string {
@@ -744,11 +781,10 @@ func (p *Parser) ParseDocxBlockTable(t *lark.DocxBlockTable) string {
 		}
 	}
 
-	// 构建表格内容
+	// 构建表格内容（cell 渲染已保证单行：换行折为 <br/>、code 块为 <pre> 形式）
 	for i, blockId := range t.Cells {
 		block := p.blockMap[blockId]
 		cellContent := p.ParseDocxBlock(block, 0)
-		cellContent = strings.ReplaceAll(cellContent, "\n", "")
 		rowIndex := int64(i) / t.Property.ColumnSize
 		colIndex := int64(i) % t.Property.ColumnSize
 
@@ -776,15 +812,7 @@ func (p *Parser) ParseDocxBlockTable(t *lark.DocxBlockTable) string {
 		}
 		writeHTMLTable(buf, rows, spanMap)
 	} else if len(rows) > 0 {
-		// 无合并：去除 <br/> 后缀再渲染 Markdown 表格
-		cleaned := make([][]string, len(rows))
-		for i, row := range rows {
-			cleaned[i] = make([]string, len(row))
-			for j, cell := range row {
-				cleaned[i][j] = strings.TrimSuffix(cell, "<br/>")
-			}
-		}
-		writeSimpleMarkdownTable(buf, cleaned)
+		writeSimpleMarkdownTable(buf, rows)
 	}
 
 	return buf.String()

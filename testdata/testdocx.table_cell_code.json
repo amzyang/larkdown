@@ -1,0 +1,152 @@
+{
+  "document": {
+    "document_id": "ROOTDOC",
+    "title": "table-cell-code"
+  },
+  "blocks": [
+    {
+      "block_id": "ROOTDOC",
+      "children": ["tbl"],
+      "block_type": 1,
+      "page": {
+        "style": {},
+        "elements": [
+          {
+            "text_run": {
+              "content": "table-cell-code",
+              "text_element_style": {}
+            }
+          }
+        ]
+      }
+    },
+    {
+      "block_id": "tbl",
+      "parent_id": "ROOTDOC",
+      "children": ["cellA1", "cellB1", "cellA2", "cellB2"],
+      "block_type": 31,
+      "table": {
+        "cells": ["cellA1", "cellB1", "cellA2", "cellB2"],
+        "property": {
+          "row_size": 2,
+          "column_size": 2,
+          "column_width": [100, 100]
+        }
+      }
+    },
+    {
+      "block_id": "cellA1",
+      "parent_id": "tbl",
+      "children": ["ctA1"],
+      "block_type": 32,
+      "table_cell": {}
+    },
+    {
+      "block_id": "ctA1",
+      "parent_id": "cellA1",
+      "block_type": 2,
+      "text": {
+        "style": {},
+        "elements": [
+          {
+            "text_run": {
+              "content": "普通文本",
+              "text_element_style": {}
+            }
+          }
+        ]
+      }
+    },
+    {
+      "block_id": "cellB1",
+      "parent_id": "tbl",
+      "children": ["codB1"],
+      "block_type": 32,
+      "table_cell": {}
+    },
+    {
+      "block_id": "codB1",
+      "parent_id": "cellB1",
+      "block_type": 14,
+      "code": {
+        "style": {
+          "language": 30,
+          "wrap": false
+        },
+        "elements": [
+          {
+            "text_run": {
+              "content": "{\n}",
+              "text_element_style": {}
+            }
+          }
+        ]
+      }
+    },
+    {
+      "block_id": "cellA2",
+      "parent_id": "tbl",
+      "children": ["codA2"],
+      "block_type": 32,
+      "table_cell": {}
+    },
+    {
+      "block_id": "codA2",
+      "parent_id": "cellA2",
+      "block_type": 14,
+      "code": {
+        "style": {
+          "language": 1,
+          "wrap": false
+        },
+        "elements": [
+          {
+            "text_run": {
+              "content": "a | b\n<pre>&x</pre>",
+              "text_element_style": {}
+            }
+          }
+        ]
+      }
+    },
+    {
+      "block_id": "cellB2",
+      "parent_id": "tbl",
+      "children": ["ctB2a", "ctB2b"],
+      "block_type": 32,
+      "table_cell": {}
+    },
+    {
+      "block_id": "ctB2a",
+      "parent_id": "cellB2",
+      "block_type": 2,
+      "text": {
+        "style": {},
+        "elements": [
+          {
+            "text_run": {
+              "content": "第一段",
+              "text_element_style": {}
+            }
+          }
+        ]
+      }
+    },
+    {
+      "block_id": "ctB2b",
+      "parent_id": "cellB2",
+      "block_type": 2,
+      "text": {
+        "style": {},
+        "elements": [
+          {
+            "text_run": {
+              "content": "第二段",
+              "text_element_style": {}
+            }
+          }
+        ]
+      }
+    }
+  ]
+}

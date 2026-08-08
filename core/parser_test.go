@@ -26,6 +26,7 @@ func TestParseDocxContent(t *testing.T) {
 		"testdocx.mention_user",
 		"testdocx.mention_doc",
 		"testdocx.nested_todos",
+		"testdocx.table_cell_code",
 	}
 	for _, td := range testdata {
 		t.Run(td, func(t *testing.T) {

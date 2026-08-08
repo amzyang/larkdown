@@ -1136,30 +1136,25 @@ func (c *converter) buildTableDescendants(n *east.Table) (string, []*lark.DocxBl
 		col := 0
 		for td := tr.FirstChild(); td != nil; td = td.NextSibling() {
 			cellID := fmt.Sprintf("cell_%s_%d_%d", tableID, row, col)
-			contentID := fmt.Sprintf("content_%s_%d_%d", tableID, row, col)
+			contentPrefix := fmt.Sprintf("content_%s_%d_%d", tableID, row, col)
 
-			elements := c.collectInlineElements(td)
-			if len(elements) == 0 {
-				elements = []*lark.DocxTextElement{emptyTextElement()}
+			contentBlocks := c.cellContentBlocks(td, contentPrefix)
+			childIDs := make([]string, len(contentBlocks))
+			for i, cb := range contentBlocks {
+				childIDs[i] = cb.BlockID
 			}
 
 			if w := displayWidth(extractNodeText(td, c.source)); w > colMaxWidths[col] {
 				colMaxWidths[col] = w
 			}
 
-			descendants = append(descendants,
-				&lark.DocxBlock{
-					BlockID:   cellID,
-					BlockType: lark.DocxBlockTypeTableCell,
-					TableCell: &lark.DocxBlockTableCell{},
-					Children:  []string{contentID},
-				},
-				&lark.DocxBlock{
-					BlockID:   contentID,
-					BlockType: lark.DocxBlockTypeText,
-					Text:      &lark.DocxBlockText{Elements: elements},
-				},
-			)
+			descendants = append(descendants, &lark.DocxBlock{
+				BlockID:   cellID,
+				BlockType: lark.DocxBlockTypeTableCell,
+				TableCell: &lark.DocxBlockTableCell{},
+				Children:  childIDs,
+			})
+			descendants = append(descendants, contentBlocks...)
 			cellIDs = append(cellIDs, cellID)
 			col++
 		}
@@ -1203,6 +1198,150 @@ func (c *converter) buildTableDescendants(n *east.Table) (string, []*lark.DocxBl
 	return tableID, append([]*lark.DocxBlock{tableBlock}, descendants...)
 }
 
+// cellInlineSegment 是 cell 行内内容按 <pre>…</pre> 边界切分后的一段：
+// 代码段（pre=true，lang/code 有效）或文本段（nodes 有效）。
+type cellInlineSegment struct {
+	pre   bool
+	lang  string
+	code  string
+	nodes []ast.Node
+}
+
+// cellHTMLTextUnescaper 是下载侧 escapeCellHTMLText（parser.go）的逆变换。
+// goldmark 不在 AST 层解析 entity（Text 节点保留原文），故 <pre> 段内容需手动解码。
+// Replacer 单遍替换：&amp;#124; 在位置 0 先命中 &amp; → 输出 & 后跳过，
+// 剩余 #124; 不再匹配，两级转义天然正确还原。
+var cellHTMLTextUnescaper = strings.NewReplacer(
+	"&amp;", "&",
+	"&lt;", "<",
+	"&gt;", ">",
+	"&#124;", "|",
+	"&#96;", "`",
+	"&#42;", "*",
+	"&#95;", "_",
+	"&#91;", "[",
+	"&#93;", "]",
+	"&#126;", "~",
+	"&#92;", "\\",
+	"&#36;", "$",
+)
+
+// isRawHTMLTag 判断节点是否为指定名称的 RawHTML 标签，返回其属性。
+func (c *converter) isRawHTMLTag(n ast.Node, name string, wantClose bool) (map[string]string, bool) {
+	raw, ok := n.(*ast.RawHTML)
+	if !ok {
+		return nil, false
+	}
+	tagName, isClose, attrs := parseHTMLTag(string(raw.Segments.Value(c.source)))
+	if tagName != name || isClose != wantClose {
+		return nil, false
+	}
+	return attrs, true
+}
+
+// splitCellSegments 把 td 的行内节点按 <pre>…</pre> 边界切成交替的文本/代码段。
+// 下载侧用单个 <br/> 作 cell 内块间连接符，紧邻 <pre> 边界的连接符被吸收，
+// 不落入相邻段内容；<pre> 内的 <br/> 还原为换行，entity 已由 goldmark 解码。
+func (c *converter) splitCellSegments(td ast.Node) []cellInlineSegment {
+	var segs []cellInlineSegment
+	var textNodes []ast.Node
+	var pre *cellInlineSegment
+	var code strings.Builder
+	skipBr := false
+
+	flushText := func() {
+		if len(textNodes) > 0 {
+			segs = append(segs, cellInlineSegment{nodes: textNodes})
+			textNodes = nil
+		}
+	}
+
+	for child := td.FirstChild(); child != nil; child = child.NextSibling() {
+		if pre == nil {
+			if attrs, ok := c.isRawHTMLTag(child, "pre", false); ok {
+				// 进入代码段：吸收紧邻其前的连接符 <br/>
+				if n := len(textNodes); n > 0 {
+					if _, isBr := c.isRawHTMLTag(textNodes[n-1], "br", false); isBr {
+						textNodes = textNodes[:n-1]
+					}
+				}
+				flushText()
+				pre = &cellInlineSegment{pre: true, lang: attrs["lang"]}
+				code.Reset()
+				continue
+			}
+			if skipBr {
+				skipBr = false
+				if _, isBr := c.isRawHTMLTag(child, "br", false); isBr {
+					continue
+				}
+			}
+			textNodes = append(textNodes, child)
+			continue
+		}
+
+		// <pre> 段内
+		if _, ok := c.isRawHTMLTag(child, "pre", true); ok {
+			pre.code = code.String()
+			segs = append(segs, *pre)
+			pre = nil
+			skipBr = true // 吸收紧随其后的连接符 <br/>
+			continue
+		}
+		if _, isBr := c.isRawHTMLTag(child, "br", false); isBr {
+			code.WriteString("\n")
+			continue
+		}
+		switch n := child.(type) {
+		case *ast.Text:
+			code.WriteString(cellHTMLTextUnescaper.Replace(string(n.Segment.Value(c.source))))
+		case *ast.String:
+			code.Write(n.Value)
+		default:
+			// 手写 markdown 未转义活性字符时的兜底：取纯文本（标记不可恢复）
+			code.WriteString(extractInlineText(child, c.source))
+		}
+	}
+	if pre != nil {
+		// 未闭合的 <pre>：按代码段收尾（容错）
+		pre.code = code.String()
+		segs = append(segs, *pre)
+	}
+	flushText()
+	return segs
+}
+
+// cellContentBlocks 生成一个 cell 的内容子块序列：<pre> 段 → Code 子块
+// （下载侧 cell 内代码块的往返表示），其余行内段 → Text 子块；
+// 空 cell 回退为单个空文本子块（与飞书空 cell 结构对齐）。
+func (c *converter) cellContentBlocks(td ast.Node, idPrefix string) []*lark.DocxBlock {
+	var blocks []*lark.DocxBlock
+	for i, seg := range c.splitCellSegments(td) {
+		id := fmt.Sprintf("%s_%d", idPrefix, i)
+		if seg.pre {
+			blocks = append(blocks, newCodeBlock(id, seg.lang, seg.code))
+			continue
+		}
+		elements := c.collectInlineElementsFromNodes(seg.nodes)
+		if len(elements) == 0 {
+			continue
+		}
+		blocks = append(blocks, &lark.DocxBlock{
+			BlockID:   id,
+			BlockType: lark.DocxBlockTypeText,
+			Text:      &lark.DocxBlockText{Elements: elements},
+		})
+	}
+	if len(blocks) == 0 {
+		blocks = append(blocks, &lark.DocxBlock{
+			BlockID:   idPrefix + "_0",
+			BlockType: lark.DocxBlockTypeText,
+			Text:      &lark.DocxBlockText{Elements: []*lark.DocxTextElement{emptyTextElement()}},
+		})
+	}
+	return blocks
+}
+
 func countTableDimensions(n *east.Table) (rows, cols int) {
 	for tr := n.FirstChild(); tr != nil; tr = tr.NextSibling() {
 		rows++
@@ -1222,10 +1361,18 @@ func countTableDimensions(n *east.Table) (rows, cols int) {
 // =============================================================
 
 func (c *converter) collectInlineElements(parent ast.Node) []*lark.DocxTextElement {
+	var nodes []ast.Node
+	for child := parent.FirstChild(); child != nil; child = child.NextSibling() {
+		nodes = append(nodes, child)
+	}
+	return c.collectInlineElementsFromNodes(nodes)
+}
+
+func (c *converter) collectInlineElementsFromNodes(nodes []ast.Node) []*lark.DocxTextElement {
 	var elements []*lark.DocxTextElement
 	var htmlStyleStack []htmlStyleEntry
 
-	for child := parent.FirstChild(); child != nil; child = child.NextSibling() {
+	for _, child := range nodes {
 		if c.handleCiteInline(child, &elements) {
 			continue
 		}

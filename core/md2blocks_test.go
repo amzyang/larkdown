@@ -478,6 +478,111 @@ func TestConvertTable(t *testing.T) {
 	assert.Equal(t, int64(2), table.Table.Property.ColumnSize)
 }
 
+// tableCellChildren 从 DescendantGroup 中取第 idx 个 cell 的子块序列。
+func tableCellChildren(t *testing.T, dg DescendantGroup, idx int) []*lark.DocxBlock {
+	t.Helper()
+	byID := map[string]*lark.DocxBlock{}
+	for _, d := range dg.Descendants {
+		byID[d.BlockID] = d
+	}
+	table := dg.Descendants[0]
+	require.Equal(t, lark.DocxBlockTypeTable, table.BlockType)
+	require.Greater(t, len(table.Children), idx)
+	cell := byID[table.Children[idx]]
+	require.NotNil(t, cell)
+	children := make([]*lark.DocxBlock, 0, len(cell.Children))
+	for _, id := range cell.Children {
+		child := byID[id]
+		require.NotNil(t, child)
+		children = append(children, child)
+	}
+	return children
+}
+
+func TestConvertTableCellPreToCodeBlock(t *testing.T) {
+	// cell 内 <pre lang> → Code 子块（下载侧 cell 内代码块的往返表示）
+	md := "| <pre lang=\"javascript\">{<br/>}</pre> |\n| --- |"
+	result, err := ConvertMarkdownToDocxBlocks(md, "")
+	require.NoError(t, err)
+
+	require.Len(t, result.DescendantGroups, 1)
+	children := tableCellChildren(t, result.DescendantGroups[0], 0)
+	require.Len(t, children, 1)
+
+	code := children[0]
+	assert.Equal(t, lark.DocxBlockTypeCode, code.BlockType)
+	require.NotNil(t, code.Code)
+	assert.Equal(t, lark.DocxCodeLanguageJavaScript, code.Code.Style.Language)
+	assert.Equal(t, "{\n}", code.Code.Elements[0].TextRun.Content)
+}
+
+func TestConvertTableCellPreEntityDecode(t *testing.T) {
+	// <pre> 内 HTML entity（&#124; &lt; &amp;）与 <br/> 解码；无 lang → PlainText
+	md := "| <pre>a &#124; b<br/>&lt;pre>&amp;x&lt;/pre></pre> |\n| --- |"
+	result, err := ConvertMarkdownToDocxBlocks(md, "")
+	require.NoError(t, err)
+
+	require.Len(t, result.DescendantGroups, 1)
+	children := tableCellChildren(t, result.DescendantGroups[0], 0)
+	require.Len(t, children, 1)
+
+	code := children[0]
+	assert.Equal(t, lark.DocxBlockTypeCode, code.BlockType)
+	require.NotNil(t, code.Code)
+	assert.Equal(t, lark.DocxCodeLanguagePlainText, code.Code.Style.Language)
+	assert.Equal(t, "a | b\n<pre>&x</pre>", code.Code.Elements[0].TextRun.Content)
+}
+
+func TestHTMLTableCellBrNewline(t *testing.T) {
+	// HTML 表格（合并单元格路径）cell 内 <br/> → 换行（此前被静默丢弃）
+	md := "<table>\n<tr><td rowspan=\"2\">a<br/>b</td><td>x</td></tr>\n<tr><td>y</td></tr>\n</table>"
+	result, err := ConvertMarkdownToDocxBlocks(md, "")
+	require.NoError(t, err)
+
+	require.Len(t, result.DescendantGroups, 1)
+	children := tableCellChildren(t, result.DescendantGroups[0], 0)
+	require.Len(t, children, 1)
+	assert.Equal(t, lark.DocxBlockTypeText, children[0].BlockType)
+	assert.Equal(t, "a\nb", children[0].Text.Elements[0].TextRun.Content)
+}
+
+func TestHTMLTableCellPreCodeBlock(t *testing.T) {
+	// HTML 表格 cell 内 <pre lang> → Code 子块（entity 由 x/net/html 解码）
+	md := "<table>\n<tr><td rowspan=\"2\"><pre lang=\"go\">a &amp; b<br/>c</pre></td><td>x</td></tr>\n<tr><td>y</td></tr>\n</table>"
+	result, err := ConvertMarkdownToDocxBlocks(md, "")
+	require.NoError(t, err)
+
+	require.Len(t, result.DescendantGroups, 1)
+	children := tableCellChildren(t, result.DescendantGroups[0], 0)
+	require.Len(t, children, 1)
+
+	code := children[0]
+	assert.Equal(t, lark.DocxBlockTypeCode, code.BlockType)
+	require.NotNil(t, code.Code)
+	assert.Equal(t, lark.DocxCodeLanguageGo, code.Code.Style.Language)
+	assert.Equal(t, "a & b\nc", code.Code.Elements[0].TextRun.Content)
+}
+
+func TestConvertTableCellPreMixedWithText(t *testing.T) {
+	// cell 内文本与 <pre> 混排：连接符 <br/> 不落入内容，产出有序多子块
+	md := "| 前缀<br/><pre lang=\"go\">x := 1</pre> |\n| --- |"
+	result, err := ConvertMarkdownToDocxBlocks(md, "")
+	require.NoError(t, err)
+
+	require.Len(t, result.DescendantGroups, 1)
+	children := tableCellChildren(t, result.DescendantGroups[0], 0)
+	require.Len(t, children, 2)
+
+	text := children[0]
+	assert.Equal(t, lark.DocxBlockTypeText, text.BlockType)
+	assert.Equal(t, "前缀", text.Text.Elements[0].TextRun.Content)
+
+	code := children[1]
+	assert.Equal(t, lark.DocxBlockTypeCode, code.BlockType)
+	assert.Equal(t, lark.DocxCodeLanguageGo, code.Code.Style.Language)
+	assert.Equal(t, "x := 1", code.Code.Elements[0].TextRun.Content)
+}
+
 // Inline style tests
 
 func TestInlineBold(t *testing.T) {
