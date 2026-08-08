@@ -58,11 +58,24 @@ func mentionObjTypeFromString(s string) lark.DocxMentionObjType {
 	return lark.DocxMentionObjTypeDocx
 }
 
-// xmlTextEscaper 转义 XML 标签内文本内容（< > &）
+// xmlTextEscaper 转义 <cite> 标签内文本。除 XML 基本集（& < >）外，markdown
+// 行内活性字符一并实体化：cite 是行内 raw HTML，开闭标签之间的文本仍被 goldmark
+// 按行内规则解析，字面 * _ [ ] 等会被解析成 Emphasis/Link 后标记丢失
+// （extractInlineText 只拍平 Text 字节）。上传侧 html.UnescapeString（flushCite）
+// 一次性还原，与 cellHTMLTextEscaper 同构。
 var xmlTextEscaper = strings.NewReplacer(
 	"&", "&amp;",
 	"<", "&lt;",
 	">", "&gt;",
+	"`", "&#96;",
+	"*", "&#42;",
+	"_", "&#95;",
+	"[", "&#91;",
+	"]", "&#93;",
+	"~", "&#126;",
+	"\\", "&#92;",
+	"$", "&#36;",
+	"|", "&#124;",
 )
 
 // xmlAttrEscaper 转义 XML 属性值（在文本基础上额外转义 "）

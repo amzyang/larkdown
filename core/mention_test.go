@@ -37,6 +37,36 @@ func TestXMLEscape(t *testing.T) {
 	assert.Equal(t, `say &quot;hi&quot; &amp; &lt;b&gt;`, xmlEscapeAttr(`say "hi" & <b>`))
 	// 不重复转义
 	assert.Equal(t, "&amp;amp;", xmlEscapeText("&amp;"))
+	// markdown 活性字符实体化：cite 内文本被 goldmark 按行内规则解析，
+	// 字面 * _ [ ] 等会被解析成 Emphasis/Link 后标记丢失（extractInlineText 拍平）
+	assert.Equal(t, "&#42;报&#42; &#95;稿&#95; &#91;1&#93; &#126;x&#126; &#36;5 &#92; &#96;c&#96; &#124;",
+		xmlEscapeText("*报* _稿_ [1] ~x~ $5 \\ `c` |"))
+}
+
+// cite 标题含 markdown 活性字符时的 round-trip：下载实体化 → 上传 html.UnescapeString
+// 还原，标记不丢失、不被解析成样式。
+func TestMentionDocTitleSpecialCharsRoundTrip(t *testing.T) {
+	title := "计划 *A* _draft_ [v1]"
+	cite := renderMentionDoc(&lark.DocxTextElementMentionDoc{
+		Token:   "TOKX",
+		ObjType: lark.DocxMentionObjTypeDocx,
+		URL:     "https%3A%2F%2Fx.feishu.cn%2Fdocx%2FTOKX",
+		Title:   title,
+	})
+	result, err := ConvertMarkdownToDocxBlocks("见 "+cite+" 文档", "")
+	require.NoError(t, err)
+	require.Len(t, result.TopBlocks, 1)
+
+	var got string
+	for _, e := range result.TopBlocks[0].Text.Elements {
+		if e.MentionDoc != nil {
+			got = e.MentionDoc.Title
+		}
+		if e.TextRun != nil && e.TextRun.TextElementStyle != nil {
+			assert.False(t, e.TextRun.TextElementStyle.Italic, "cite 内文本不应被解析成斜体")
+		}
+	}
+	assert.Equal(t, title, got)
 }
 
 func TestConvertCiteMentionUser(t *testing.T) {
