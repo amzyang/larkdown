@@ -678,6 +678,8 @@ func (p *Parser) ParseDocxBlockFile(file *lark.DocxBlockFile) string {
 		fileName = file.Token
 	}
 	p.FileTokens = append(p.FileTokens, file.Token)
+	// 文件名走 label 转义（[ ] * 等破坏链接结构；上传侧 extractLinkText 反转义还原）
+	fileName = escapeMarkdownText(fileName, escapeContext{})
 	return fmt.Sprintf("[%s](%s)\n", fileName, file.Token)
 }
 

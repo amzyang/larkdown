@@ -55,6 +55,17 @@ func TestParseDocxContent(t *testing.T) {
 	}
 }
 
+// File 块文件名含 markdown 活性字符（[ ] * 等）会破坏 [name](token) 链接结构，
+// 名字须走 label 转义（上传侧 extractLinkText 反转义还原为原始文件名）。
+func TestParseDocxBlockFileEscapesName(t *testing.T) {
+	parser := core.NewParser(core.NewConfig("", "").Output, nil)
+	got := parser.ParseDocxBlockFile(&lark.DocxBlockFile{
+		Name:  "report [v1] *final*.pdf",
+		Token: "FILETOKEN",
+	})
+	assert.Equal(t, "[report \\[v1\\] \\*final\\*.pdf](FILETOKEN)\n", got)
+}
+
 // 代码块内容含 ``` 行时固定三反引号围栏会被提前闭合（内容逃逸为正文），
 // 围栏须按内容最长反引号 run 动态加长。
 func TestParseDocxBlockCodeFenceLengthens(t *testing.T) {

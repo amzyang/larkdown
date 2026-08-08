@@ -115,6 +115,16 @@ func EscapeMarkdownLinkDest(dest string) string {
 	return out.String()
 }
 
+// QuoteLinkDestIfNeeded 本地路径 destination 含空格/括号时用 CommonMark 尖括号
+// destination（<...>）包裹。本地路径不能 percent-encode——上传侧按原始路径查文件，
+// encode 会失配。路径含 <> 时尖括号形态不成立，原样返回（文件名清理层已把 <> 换成 _）。
+func QuoteLinkDestIfNeeded(dest string) string {
+	if !strings.ContainsAny(dest, " ()") || strings.ContainsAny(dest, "<>") {
+		return dest
+	}
+	return "<" + dest + ">"
+}
+
 func ValidateDocumentURL(url string) (string, string, error) {
 	matchResult := reDocumentURL.FindStringSubmatch(url)
 	if matchResult == nil || len(matchResult) != 3 {

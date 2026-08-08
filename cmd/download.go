@@ -264,7 +264,7 @@ func downloadDocument(ctx context.Context, client *core.Client, url string, opts
 				}
 				continue
 			}
-			markdown = strings.Replace(markdown, imgToken, localLink, 1)
+			markdown = strings.Replace(markdown, imgToken, utils.QuoteLinkDestIfNeeded(localLink), 1)
 		}
 		for _, fileToken := range parser.FileTokens {
 			localLink, err := client.DownloadMedia(
@@ -279,7 +279,7 @@ func downloadDocument(ctx context.Context, client *core.Client, url string, opts
 				}
 				continue
 			}
-			markdown = strings.Replace(markdown, fileToken, localLink, 1)
+			markdown = strings.Replace(markdown, fileToken, utils.QuoteLinkDestIfNeeded(localLink), 1)
 		}
 	}
 

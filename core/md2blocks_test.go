@@ -2455,6 +2455,23 @@ func TestConvertFileLink(t *testing.T) {
 		assert.Equal(t, "./report.pdf", result.FilePaths[0])
 	})
 
+	t.Run("尖括号 dest 与转义文件名还原", func(t *testing.T) {
+		subDir := filepath.Join(tmpDir, "sub dir")
+		require.NoError(t, os.MkdirAll(subDir, 0o755))
+		spacedFile := filepath.Join(subDir, "report [v1].pdf")
+		require.NoError(t, os.WriteFile(spacedFile, []byte("dummy"), 0o644))
+
+		md := `[report \[v1\].pdf](<sub dir/report [v1].pdf>)`
+		result, err := ConvertMarkdownToDocxBlocks(md, tmpDir)
+		require.NoError(t, err)
+
+		require.Len(t, result.TopBlocks, 1)
+		require.Equal(t, lark.DocxBlockTypeFile, result.TopBlocks[0].BlockType)
+		assert.Equal(t, "report [v1].pdf", result.TopBlocks[0].File.Name)
+		require.Len(t, result.FilePaths, 1)
+		assert.Equal(t, "sub dir/report [v1].pdf", result.FilePaths[0])
+	})
+
 	t.Run("HTTP 链接保持普通链接", func(t *testing.T) {
 		md := "[Google](https://google.com)"
 		result, err := ConvertMarkdownToDocxBlocks(md, tmpDir)

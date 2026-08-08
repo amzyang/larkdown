@@ -35,6 +35,16 @@ func TestEscapeURLStyleMatchesFeishu(t *testing.T) {
 		EscapeURL("https://x.feishu.cn/docx/T1"))
 }
 
+// 本地路径 destination 不能 percent-encode（上传侧按原始路径查文件），
+// 含空格/括号时用 CommonMark 尖括号 destination 包裹。
+func TestQuoteLinkDestIfNeeded(t *testing.T) {
+	assert.Equal(t, "static/a.pdf", QuoteLinkDestIfNeeded("static/a.pdf"))
+	assert.Equal(t, "<static/a (1).pdf>", QuoteLinkDestIfNeeded("static/a (1).pdf"))
+	assert.Equal(t, "<static/带 空格.pdf>", QuoteLinkDestIfNeeded("static/带 空格.pdf"))
+	// 尖括号形态容不下 <>（文件名清理层已把 <> 换成 _），防御性原样返回
+	assert.Equal(t, "a<b (1).pdf", QuoteLinkDestIfNeeded("a<b (1).pdf"))
+}
+
 // markdown 行内链接 destination 位的防护集：只 encode 会破坏 [](...) 结构的字符，
 // 其余（含 CJK、_、已有 %XX）原样保留。块签名双侧过 UnescapeURL 归一，encode 不引入漂移。
 func TestEscapeMarkdownLinkDest(t *testing.T) {
