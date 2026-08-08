@@ -533,9 +533,10 @@ func (p *Parser) ParseDocxTextElementTextRun(tr *lark.DocxTextElementTextRun) st
 			if link := style.Link; link != nil {
 				// destination 位：解码保可读，再对会破坏 [](...) 结构的字符做 percent-encode
 				// 防护（签名双侧过 UnescapeURL 归一，不引入漂移）
+				linkURL := utils.UnescapeURL(link.URL)
 				openers = append(openers, "[")
-				closers = append(closers, fmt.Sprintf("](%s)", utils.EscapeMarkdownLinkDest(utils.UnescapeURL(link.URL))))
-				p.collectRef(DocRefFromLink(utils.UnescapeURL(link.URL), tr.Content))
+				closers = append(closers, fmt.Sprintf("](%s)", utils.EscapeMarkdownLinkDest(linkURL)))
+				p.collectRef(DocRefFromLink(linkURL, tr.Content))
 			}
 			if style.Bold {
 				if p.useHTMLTags {

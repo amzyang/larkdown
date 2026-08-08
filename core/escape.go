@@ -4,6 +4,8 @@ import (
 	"strings"
 	"unicode"
 	"unicode/utf8"
+
+	"github.com/yuin/goldmark/util"
 )
 
 // escapeContext 描述一段 TextRun 文本所处的 markdown 上下文，决定转义规则。
@@ -189,7 +191,8 @@ func unescapeMarkdownText(s string) string {
 	var out strings.Builder
 	out.Grow(len(s))
 	for i := 0; i < len(s); i++ {
-		if s[i] == '\\' && i+1 < len(s) && isASCIIPunct(s[i+1]) {
+		// util.IsPunct 即 CommonMark 可转义 ASCII 标点集（goldmark 同源判定）
+		if s[i] == '\\' && i+1 < len(s) && util.IsPunct(s[i+1]) {
 			out.WriteByte(s[i+1])
 			i++
 			continue
@@ -197,13 +200,4 @@ func unescapeMarkdownText(s string) string {
 		out.WriteByte(s[i])
 	}
 	return out.String()
-}
-
-// isASCIIPunct 判断 CommonMark 定义的可转义 ASCII 标点。
-func isASCIIPunct(c byte) bool {
-	switch {
-	case c >= '!' && c <= '/', c >= ':' && c <= '@', c >= '[' && c <= '`', c >= '{' && c <= '~':
-		return true
-	}
-	return false
 }
