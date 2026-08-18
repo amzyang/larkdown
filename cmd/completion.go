@@ -14,6 +14,10 @@ func newCompletionCommand() *cobra.Command {
 	completion := &cobra.Command{
 		Use:   "completion [bash|zsh|fish|powershell]",
 		Short: "Output shell completion script for bash, zsh, fish, or PowerShell",
+		// 拼错 shell 名报错而非 help + exit 0；RunE 仅为让 Args 校验生效（cobra 对非
+		// Runnable 命令跳过 ValidateArgs），裸 `larkdown completion` 仍打印 help
+		Args: rejectUnknownSubcommand,
+		RunE: func(cmd *cobra.Command, args []string) error { return cmd.Help() },
 		Long: `Output shell completion script. Source the output to enable completion.
 
   # bash (~/.bashrc)

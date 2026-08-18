@@ -413,6 +413,25 @@ func newSkillsCommand() *cobra.Command {
 	}
 }
 
+// rejectUnknownSubcommand 供无 RunE 的分组命令（root/auth/completion）作 Args 校验：
+// 拼错子命令报中文错误 + 建议 + --help 指引，以 exitError 携带（用户输入类，不上报
+// Sentry）。替代 cobra 默认行为——root 报英文错误无指引，非 root 打印 help 且 exit 0，
+// agent 会把后者误判为执行成功。
+func rejectUnknownSubcommand(cmd *cobra.Command, args []string) error {
+	if len(args) == 0 {
+		return nil
+	}
+	if cmd.SuggestionsMinimumDistance <= 0 {
+		cmd.SuggestionsMinimumDistance = 2 // SuggestionsFor 的 levenshtein 通道需 >0，取 cobra 默认值
+	}
+	msg := fmt.Sprintf("未知命令 %q", args[0])
+	if suggestions := cmd.SuggestionsFor(args[0]); len(suggestions) > 0 {
+		msg += "\n是否想用:\n\t" + strings.Join(suggestions, "\n\t")
+	}
+	msg += fmt.Sprintf("\n运行 '%s --help' 查看用法", cmd.CommandPath())
+	return &exitError{msg: msg, code: 1}
+}
+
 func newRootCommand() *cobra.Command {
 	short := "Feishu/Lark documents <-> Markdown: download, upload, sync and publish"
 	root := &cobra.Command{
@@ -438,7 +457,9 @@ func newRootCommand() *cobra.Command {
 			}
 			return nil
 		},
-		// 无 RunE：裸 larkdown 打印 help 到 stdout，exit 0
+		// RunE 仅为让 Args 校验生效（cobra 对非 Runnable 命令跳过 ValidateArgs 直接打 help）：
+		// 裸 larkdown 仍打印 help 到 stdout，exit 0
+		RunE: func(cmd *cobra.Command, args []string) error { return cmd.Help() },
 	}
 	root.PersistentFlags().BoolVar(&globalOpts.debug, "debug", false, "Enable HTTP request/response logging to stderr (JSONL format)")
 	root.PersistentFlags().StringVar(&globalOpts.as, "as", identityUser, "Identity for Feishu API calls: user (user_access_token, default) or bot (tenant_access_token app credentials)")
@@ -447,13 +468,16 @@ func newRootCommand() *cobra.Command {
 	_ = root.MarkPersistentFlagFilename("config", "json")
 	_ = root.RegisterFlagCompletionFunc("as", cobra.FixedCompletions(
 		[]cobra.Completion{identityUser, identityBot}, cobra.ShellCompDirectiveNoFileComp))
-	// flag 解析错误：单行错误 + --help 提示（不 dump 整页 usage），退出码 1
+	// flag 解析错误：单行错误 + --help 指引（不 dump 整页 usage），退出码 1。
+	// stderr 是纠正 agent 误用 flag 的唯一保证送达通道。不用 %w 保 pflag 类型链：
+	// exitError（用户输入类）永不上报 Sentry，保链无消费方。
 	root.SetFlagErrorFunc(func(cmd *cobra.Command, err error) error {
 		return &exitError{
-			msg:  fmt.Sprintf("%v\nRun '%s --help' for usage.", err, cmd.CommandPath()),
+			msg:  fmt.Sprintf("%v\n运行 '%s --help' 查看用法", err, cmd.CommandPath()),
 			code: 1,
 		}
 	})
+	root.Args = rejectUnknownSubcommand
 	// 帮助页按用途分组：核心转换 / 认证配置 / 辅助工具；隐藏命令（login 别名、sentry）不分组
 	root.AddGroup(
 		&cobra.Group{ID: "core", Title: "Core Commands:"},

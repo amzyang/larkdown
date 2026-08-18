@@ -149,6 +149,42 @@ func TestRootContract(t *testing.T) {
 	assert.NotEmpty(t, root.Version)
 }
 
+// TestUsageErrorsSuggestHelp 锁用法错误的 agent 纠正信号：flag 解析错误与未知子命令
+// 均以 *exitError 返回（不上报 Sentry）、退出码 1，且附带「运行 <cmd> --help 查看用法」
+// 指引与拼写建议——stderr 是纠正 agent 误用的唯一保证送达通道。auth/completion 这类
+// 无 RunE 的分组命令拼错子命令须报错，而非 cobra 默认的打印 help 且 exit 0（agent 会
+// 误判为执行成功）。
+func TestUsageErrorsSuggestHelp(t *testing.T) {
+	cases := []struct {
+		args []string
+		msgs []string
+	}{
+		{[]string{"download", "--bogus"},
+			[]string{"unknown flag: --bogus", "运行 'larkdown download --help' 查看用法"}},
+		{[]string{"downloda"},
+			[]string{`未知命令 "downloda"`, "是否想用:\n\tdownload", "运行 'larkdown --help' 查看用法"}},
+		{[]string{"auth", "bogus"},
+			[]string{`未知命令 "bogus"`, "运行 'larkdown auth --help' 查看用法"}},
+		{[]string{"completion", "tcsh"},
+			[]string{`未知命令 "tcsh"`, "运行 'larkdown completion --help' 查看用法"}},
+	}
+	for _, tc := range cases {
+		root := newRootCommand()
+		root.SetOut(io.Discard)
+		root.SetErr(io.Discard)
+		root.SetArgs(tc.args)
+
+		err := root.ExecuteContext(context.Background())
+
+		var ee *exitError
+		require.ErrorAs(t, err, &ee, "args=%v", tc.args)
+		assert.Equal(t, 1, ee.code, "args=%v", tc.args)
+		for _, msg := range tc.msgs {
+			assert.Contains(t, ee.msg, msg, "args=%v", tc.args)
+		}
+	}
+}
+
 // TestValidationExitErrors 锁参数校验错误路径：全部在 handler 之前返回（不触网络），
 // 以 *exitError 携带裸消息 + 退出码 1（与原 cli.Exit 行为一致）。
 // upload --full --incr 同时验证 --incr → --incremental 的 NormalizeFunc 别名：

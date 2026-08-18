@@ -49,7 +49,10 @@ func newAuthCommand() *cobra.Command {
 	auth := &cobra.Command{
 		Use:   "auth",
 		Short: "Manage Feishu authentication (login / status / logout)",
-		// 无 RunE：裸 `larkdown auth` 打印 help
+		// 拼错子命令报错而非 help + exit 0；RunE 仅为让 Args 校验生效（cobra 对非
+		// Runnable 命令跳过 ValidateArgs），裸 `larkdown auth` 仍打印 help
+		Args: rejectUnknownSubcommand,
+		RunE: func(cmd *cobra.Command, args []string) error { return cmd.Help() },
 	}
 	auth.AddCommand(
 		newLoginCommand(),
