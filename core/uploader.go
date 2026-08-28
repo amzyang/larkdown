@@ -24,6 +24,11 @@ type Uploader struct {
 	out io.Writer
 	// statePaths 定位画板映射等持久状态的中心 store 目录（默认 os.UserConfigDir()/feishu2md）。
 	statePaths StatePaths
+	// cachePaths 定位下载版本边车（同步点记录），驱动 upload 前的远端漂移检查与
+	// 成功后的同步点刷新。hasCachePaths=false（定位缓存目录失败或测试未注入）时
+	// 这两项能力整体禁用，upload 退回无基线行为。
+	cachePaths    CachePaths
+	hasCachePaths bool
 	// mentionUserNames 当前上传文档的 @人 user-id → 显示名映射，
 	// 用于写入失败时把 mention 降级为纯文本。每次 writeContent/incrementalUpdate 前设置。
 	mentionUserNames map[string]string
@@ -51,7 +56,12 @@ func NewUploader(client *Client) (*Uploader, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Uploader{client: client, statePaths: sp, out: os.Stdout}, nil
+	u := &Uploader{client: client, statePaths: sp, out: os.Stdout}
+	if cp, err := DefaultCachePaths(); err == nil {
+		u.cachePaths = cp
+		u.hasCachePaths = true
+	}
+	return u, nil
 }
 
 // SetOutput 重定向进度输出（upload --json 时传 os.Stderr）。
@@ -73,6 +83,7 @@ type UploadOptions struct {
 	Incremental     bool   // 增量更新（只修改变化的块，CLI 默认；false 为全量重建，对应 --full）
 	DryRun          bool   // 仅计算 diff 并输出报告，不执行写操作（需配合 Incremental，且仅支持更新已有文档）
 	Verbose         bool   // dryrun 时列出所有块（含未变化）
+	Ours            bool   // 远端自上次同步点后已变化时仍以本地为准强制上传（对应 --ours）
 }
 
 // UploadResult 上传结果
@@ -143,32 +154,121 @@ func asSourceGone(err error, source string) *SourceGoneError {
 	return nil
 }
 
-// resolveDocumentID 从 source URL 推导 document_id
-func (u *Uploader) resolveDocumentID(ctx context.Context, source string) (string, error) {
+// remoteProbe 是 source 探活的结果：document_id 与探活途中已拿到的版本信息，
+// 供漂移检查复用、避免重复 API 调用。
+type remoteProbe struct {
+	documentID  string
+	wikiToken   string // wiki URL 的 node token；空表示 docx URL
+	objEditTime string // wiki 节点编辑时间（docx 为空，与 DownloadVersion 口径一致）
+	revisionID  int64
+	hasRevision bool
+}
+
+// resolveDocument 从 source URL 推导 document_id 并探活目标。
+func (u *Uploader) resolveDocument(ctx context.Context, source string) (remoteProbe, error) {
 	docType, docToken, err := utils.ValidateDocumentURL(source)
 	if err != nil {
-		return "", fmt.Errorf("无法解析 source URL: %w", err)
+		return remoteProbe{}, fmt.Errorf("无法解析 source URL: %w", err)
 	}
 	if docType == "docx" {
 		// 前置探活：目标已删除时在任何本地写回/远端写入前报错（issue #9）。
-		if _, err := u.client.GetDocxDocument(ctx, docToken); err != nil {
+		doc, err := u.client.GetDocxDocument(ctx, docToken)
+		if err != nil {
 			if sge := asSourceGone(err, source); sge != nil {
-				return "", sge
+				return remoteProbe{}, sge
 			}
-			return "", err
+			return remoteProbe{}, err
 		}
-		return docToken, nil
+		return remoteProbe{documentID: docToken, revisionID: doc.RevisionID, hasRevision: true}, nil
 	}
 	// wiki URL: 需要 API 调用。get_node 对回收站中的节点返回 131005，天然充当探活；
 	// shortcut 节点 origin 被删的残余边缘刻意不做二次探活（会被后续块 API 以 1770003 硬终止，非静默）。
 	node, err := u.client.GetWikiNodeInfo(ctx, docToken)
 	if err != nil {
 		if sge := asSourceGone(err, source); sge != nil {
-			return "", sge
+			return remoteProbe{}, sge
 		}
-		return "", fmt.Errorf("获取 Wiki 节点信息失败: %w", err)
+		return remoteProbe{}, fmt.Errorf("获取 Wiki 节点信息失败: %w", err)
 	}
-	return node.ObjToken, nil
+	return remoteProbe{documentID: node.ObjToken, wikiToken: docToken, objEditTime: node.ObjEditTime}, nil
+}
+
+// remoteVersion 计算探活目标的当前远程版本（与 download 边车的 DownloadVersion 同口径）。
+// wiki 探活只拿到 obj_edit_time，revision 需补一次轻量 GetDocxDocument。
+func (u *Uploader) remoteVersion(ctx context.Context, probe remoteProbe) (string, error) {
+	rev := probe.revisionID
+	if !probe.hasRevision {
+		doc, err := u.client.GetDocxDocument(ctx, probe.documentID)
+		if err != nil {
+			return "", err
+		}
+		rev = doc.RevisionID
+	}
+	return DownloadVersion(probe.objEditTime, rev), nil
+}
+
+// lookupSyncRecord 查询 filePath 所在目录下 documentID 的同步点记录；
+// 记录路径与本文件不一致（重命名/另一份产物）或无缓存目录时返回 nil。
+func (u *Uploader) lookupSyncRecord(documentID, filePath string) *DownloadRecord {
+	if !u.hasCachePaths {
+		return nil
+	}
+	absPath, err := filepath.Abs(filePath)
+	if err != nil {
+		return nil
+	}
+	rec := LookupDownloadRecord(u.cachePaths, documentID, filepath.Dir(absPath))
+	if rec == nil || rec.Path != absPath {
+		return nil
+	}
+	return rec
+}
+
+// recordUploadSyncPoint 在上传成功后刷新同步点：重新读取远端版本、以盘上最终内容
+// 计算 hash、以正文为 base 快照（上传后远端与本地语义一致）。best-effort，失败仅告警。
+// wiki 的 obj_edit_time 可能异步滞后于本次上传：记录偏旧只导致下次多一次重下载判断，方向安全。
+func (u *Uploader) recordUploadSyncPoint(ctx context.Context, probe remoteProbe, filePath string) {
+	if !u.hasCachePaths {
+		return
+	}
+	objEditTime := ""
+	if probe.wikiToken != "" {
+		node, err := u.client.GetWikiNodeInfo(ctx, probe.wikiToken)
+		if err != nil {
+			u.logf("警告: 刷新同步点失败（获取 Wiki 节点信息）: %v\n", err)
+			return
+		}
+		objEditTime = node.ObjEditTime
+	}
+	doc, err := u.client.GetDocxDocument(ctx, probe.documentID)
+	if err != nil {
+		u.logf("警告: 刷新同步点失败（获取文档版本）: %v\n", err)
+		return
+	}
+	content, err := os.ReadFile(filePath)
+	if err != nil {
+		u.logf("警告: 刷新同步点失败（读取本地文件）: %v\n", err)
+		return
+	}
+	absPath, err := filepath.Abs(filePath)
+	if err != nil {
+		return
+	}
+	_, body, err := ParseFrontMatter(string(content))
+	if err != nil {
+		body = string(content)
+	}
+	rec := DownloadRecord{
+		Path:        absPath,
+		Version:     DownloadVersion(objEditTime, doc.RevisionID),
+		ContentHash: ContentHash(content),
+		// 上传路径不采集正文引用（缺一条会让 --follow 的 prune 误删 _refs/），
+		// 显式标记未采集，--follow 下次重下补录
+		RefsRecorded: false,
+	}
+	if err := RecordSyncPoint(u.cachePaths, probe.documentID, rec, body); err != nil {
+		u.logf("警告: 记录同步点失败: %v\n", err)
+	}
 }
 
 // Upload 上传或更新 md 文件到 Wiki
@@ -251,17 +351,45 @@ func (u *Uploader) createDocument(ctx context.Context, filePath, body string, op
 		}
 	}
 
+	// 新建即同步点：后续 download 不会把本文件当无基线覆写，upload 也有漂移基线
+	u.recordUploadSyncPoint(ctx, remoteProbe{documentID: node.ObjToken, wikiToken: node.NodeToken}, filePath)
+
 	return &UploadResult{FrontMatter: fm, IsNew: true, UnresolvedMdRefs: u.unresolvedMdRefs}, nil
 }
 
 // updateDocument 更新已有文档
 func (u *Uploader) updateDocument(ctx context.Context, filePath string, fm *FrontMatter, body string, opts UploadOptions) (*UploadResult, error) {
-	documentID, err := u.resolveDocumentID(ctx, fm.Source)
+	probe, err := u.resolveDocument(ctx, fm.Source)
 	if err != nil {
 		return nil, err
 	}
+	documentID := probe.documentID
 
 	u.logf("更新文档: %s (document_id=%s)\n", filepath.Base(filePath), documentID)
+
+	// 同步守卫（有同步点记录才生效；无基线维持原有「本地赢」行为）
+	if rec := u.lookupSyncRecord(documentID, filePath); rec != nil {
+		// 上次 --merge 写入的冲突标记尚未解决 → 拒绝上传半成品
+		if rec.Conflict && HasUnresolvedConflictMarkers(body) {
+			return nil, &ConflictPendingError{Path: filePath, ManifestFile: u.cachePaths.DownloadManifestFile(documentID)}
+		}
+		// 远端漂移检查：远端自上次同步点后已变化时直接上传会回滚远端改动
+		if rec.ContentHash != "" {
+			remoteVersion, verr := u.remoteVersion(ctx, probe)
+			switch {
+			case verr != nil:
+				u.logf("警告: 获取远端版本失败，跳过漂移检查: %v\n", verr)
+			case remoteVersion == rec.Version:
+				// 未漂移
+			case opts.Ours:
+				u.logf("--ours: 远端已变化，以本地为准强制上传\n")
+			case opts.DryRun:
+				u.logf("警告: 远端文档自上次同步后已变化，实际上传将被拒绝（先 larkdown download --merge 合并，或加 --ours 强制）\n")
+			default:
+				return nil, &SyncDriftError{Source: fm.Source, RecordedVersion: rec.Version, RemoteVersion: remoteVersion}
+			}
+		}
+	}
 
 	// dryrun 时跳过文件写入，保持纯只读
 	if !opts.DryRun {
@@ -278,6 +406,10 @@ func (u *Uploader) updateDocument(ctx context.Context, filePath string, fm *Fron
 		if err := u.fullUpdate(ctx, documentID, filePath, body); err != nil {
 			return nil, err
 		}
+	}
+
+	if !opts.DryRun {
+		u.recordUploadSyncPoint(ctx, probe, filePath)
 	}
 
 	return &UploadResult{FrontMatter: fm, IsNew: false, UnresolvedMdRefs: u.unresolvedMdRefs}, nil

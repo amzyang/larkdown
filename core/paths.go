@@ -87,6 +87,14 @@ func (p CachePaths) DownloadManifestFile(documentID string) string {
 	return filepath.Join(p.DownloadsDir(), documentID+".yaml")
 }
 
+// DownloadBaseFile 按 document_id 与产物目录定位同步点 base 快照
+// <base>/downloads/<document_id>.<dirkey>.base.md。dirkey 是目录路径 sha256 的前 12 位
+// （与 DownloadRecord 按目录去重的粒度一致：同一文档在同一目录下仅一份快照）。
+func (p CachePaths) DownloadBaseFile(documentID, absDir string) string {
+	sum := sha256.Sum256([]byte(filepath.Clean(absDir)))
+	return filepath.Join(p.DownloadsDir(), fmt.Sprintf("%s.%x.base.md", documentID, sum[:6]))
+}
+
 // publishKey 计算 target 路径的稳定 key：先 filepath.Clean 归一，再取 sha256 全量 hex。
 // 用 hash 而非编码原路径，天然消除空格/中文/分隔符等特殊字符问题。
 // 注意：调用方负责先转绝对路径（filepath.Abs 依赖 cwd，属不确定来源，留在外壳层）。

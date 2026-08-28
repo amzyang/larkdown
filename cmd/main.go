@@ -172,9 +172,12 @@ func newDownloadCommand() *cobra.Command {
 	fl.BoolVar(&dlOpts.noComments, "no-comments", false, "Exclude document comments (overrides --comments)")
 	fl.BoolVar(&dlOpts.noDiff, "no-diff", false, "Disable diff output when downloading")
 	fl.BoolVarP(&dlOpts.force, "force", "f", false, "Force re-download even if the remote document is unchanged")
+	fl.BoolVar(&dlOpts.theirs, "theirs", false, "When the local file has been edited since the last sync, overwrite it with the remote version (discard local edits)")
+	fl.BoolVar(&dlOpts.merge, "merge", false, "When the local file has been edited since the last sync, three-way merge (diff3) local edits with remote changes; conflicts are written with git-style markers and exit non-zero")
 	fl.BoolVar(&dlOpts.follow, "follow", false, "Also download referenced docx/wiki documents (mentions and inline links) into _refs/")
 	fl.IntVar(&dlOpts.followDepth, "follow-depth", 1, "How many levels of references to follow (requires --follow)")
 	fl.BoolVar(&dlOpts.asJSON, "json", false, "Emit a machine-readable JSON summary (documents, files, failed); progress goes to stderr and implies --no-diff")
+	cmd.MarkFlagsMutuallyExclusive("theirs", "merge")
 	_ = cmd.MarkFlagDirname("output")
 	return cmd
 }
@@ -264,6 +267,7 @@ func newUploadCommand() *cobra.Command {
 	fl.Bool("full", false, "Full update (delete all remote blocks and re-upload) instead of the default incremental update")
 	fl.BoolVar(&uploadOpts.dryRun, "dry-run", false, "Show what incremental update would do without making changes (incompatible with --full)")
 	fl.BoolVarP(&uploadOpts.verbose, "verbose", "v", false, "Show all blocks including unchanged ones (used with --dry-run)")
+	fl.BoolVar(&uploadOpts.ours, "ours", false, "Force upload even if the remote document changed since the last sync (local wins; remote-only changes will be overwritten)")
 	fl.BoolVar(&uploadOpts.json, "json", false, "Emit machine-readable JSON (file, is_new, url); progress goes to stderr (incompatible with --dry-run)")
 	_ = fl.MarkHidden("incremental")
 	return cmd

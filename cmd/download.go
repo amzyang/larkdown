@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	stderrors "errors"
 	"fmt"
 	"io"
 	"log"
@@ -23,10 +24,26 @@ type DownloadOpts struct {
 	noComments  bool // --no-comments：显式排除评论（优先于 --comments）
 	noDiff      bool
 	force       bool               // 忽略本地版本标记，强制重新下载
+	theirs      bool               // 本地被编辑过时仍以远端为准覆写（放弃本地编辑）
+	merge       bool               // 本地被编辑过时做三方合并（diff3），冲突写标记并以非零码退出
 	follow      bool               // 追加下载正文引用的 docx/wiki 文档到 _refs/
 	followDepth int                // follow 的引用层数（>=1）
 	asJSON      bool               // --json：结束时输出汇总 JSON，进度改道 stderr、隐含 no-diff
 	refs        *core.RefCollector // 正文引用收集器（nil = 不收集；并发 goroutine 共享）
+}
+
+// childOpts 派生一份用于子文档下载的选项：继承逐文档传播的 flag
+// （comments/noDiff/force/theirs/merge/refs），recursive/follow 等仅作用于根目标的字段不继承。
+func (o *DownloadOpts) childOpts(outputDir string) DownloadOpts {
+	return DownloadOpts{
+		outputDir: outputDir,
+		comments:  o.comments,
+		noDiff:    o.noDiff,
+		force:     o.force,
+		theirs:    o.theirs,
+		merge:     o.merge,
+		refs:      o.refs,
+	}
 }
 
 // dlProgress 是 download/mirror 的进度输出通道；download --json 时改道 stderr，
@@ -307,12 +324,13 @@ func downloadDocument(ctx context.Context, client *core.Client, url string, opts
 	// Compute markdown filename (使用 urlToken 确保文件名与 source URL 一致)
 	mdName := core.ComputeMdFilename(title, urlToken, dlConfig.Output)
 
-	// 检测并清理标题变更导致的旧文件（入回收站前留存内容，供围栏拼写保留使用）
+	// 检测标题变更导致的旧文件（此处只读内容，守卫放行后才移入回收站——
+	// 拒绝覆写时本地必须原样保留）
+	var staleFile string
 	var staleContent []byte
-	if staleFile, err := core.FindStaleFile(opts.outputDir, mdName, urlToken); err == nil && staleFile != "" {
-		staleContent, _ = os.ReadFile(staleFile)
-		utils.MoveToTrash(staleFile)
-		fmt.Fprintf(dlProgress, "标题变更: %s → %s (旧文件已移入回收站)\n", filepath.Base(staleFile), mdName)
+	if sf, err := core.FindStaleFile(opts.outputDir, mdName, urlToken); err == nil && sf != "" {
+		staleFile = sf
+		staleContent, _ = os.ReadFile(sf)
 	}
 
 	outputPath := filepath.Join(opts.outputDir, mdName)
@@ -325,6 +343,52 @@ func downloadDocument(ctx context.Context, client *core.Client, url string, opts
 		markdown = core.PreserveLocalFenceInfo(string(staleContent), markdown)
 	}
 
+	// 同步守卫：本地文件自上次同步点后被编辑过时拒绝静默覆写。
+	// base 快照取本次远端渲染正文——无论直接覆写还是合并，它都是下一次合并的公共祖先。
+	version := core.DownloadVersion(objEditTime, docx.RevisionID)
+	_, remoteBodyForBase, _ := core.ParseFrontMatter(markdown)
+	rec := lookupDownloadRecord(docToken, opts.outputDir)
+	var localContent []byte
+	if rec != nil {
+		localContent, _ = os.ReadFile(rec.Path)
+	}
+	conflictPending := false
+	mergeApplied := false
+	localDiffers := localContent != nil && string(localContent) != markdown // 覆写将真正改变本地内容
+	syncState := core.ClassifySync(rec, localContent, version)
+	if rec != nil && rec.ContentHash == "" && localDiffers {
+		// 旧版边车记录无内容指纹（必属 SyncNoBaseline）：本次覆写不检测本地编辑，
+		// 写盘后建立基线（仅出现一次）
+		fmt.Fprintf(dlProgress, "提示: 无同步基线（旧版下载记录），本次覆写不检测本地编辑\n")
+	}
+	// 同步点指纹默认取写盘全文；合并路径取合并前的远端渲染全文——合并产物承载着
+	// 未上传的本地编辑，若按产物记指纹，下次 download 会把它判成「与远端同步」而在
+	// 远端再变化时静默覆写（数据丢失）；按远端渲染记指纹则下次判定为本地已编辑，
+	// 守卫照常拦截，可再次 --merge（base 已推进到本次远端渲染，祖先正确）。
+	// 此处先留存值：合并路径会把 markdown 替换为合并产物。
+	hashContent := markdown
+	if (syncState == core.SyncLocalEdited || syncState == core.SyncDiverged) && localDiffers {
+		switch {
+		case opts.theirs:
+			fmt.Fprintf(dlProgress, "--theirs: 放弃本地编辑，以远端为准覆写 %s\n", rec.Path)
+		case opts.merge:
+			merged, hasConflict, err := mergeLocalRemote(docToken, opts.outputDir, localContent, remoteBodyForBase, frontMatter)
+			if err != nil {
+				return nil, err
+			}
+			markdown = merged
+			conflictPending = hasConflict
+			mergeApplied = true
+		default:
+			return nil, &core.DivergedError{Path: rec.Path, RemoteChanged: syncState == core.SyncDiverged}
+		}
+	}
+
+	if staleFile != "" {
+		utils.MoveToTrash(staleFile)
+		fmt.Fprintf(dlProgress, "标题变更: %s → %s (旧文件已移入回收站)\n", filepath.Base(staleFile), mdName)
+	}
+
 	if !opts.noDiff {
 		showDiff(outputPath, markdown, dlConfig.Output.DiffStyle)
 	}
@@ -333,15 +397,22 @@ func downloadDocument(ctx context.Context, client *core.Client, url string, opts
 		return nil, err
 	}
 	fmt.Fprintf(dlProgress, "已下载 Markdown 文件: %s\n", outputPath)
-	dlReport.AddDoc(outputPath, title, false)
 
-	// 记录下载版本与正文引用（供下次跳过未变化文档并回放 refs）；
-	// 素材下载不完整时清除记录，保证下次重试
-	version := core.DownloadVersion(objEditTime, docx.RevisionID)
-	if len(failedAssets) > 0 {
+	// 记录同步点（版本 + 内容 hash + base 快照 + 正文引用，供下次跳过与三方合并）；
+	// 素材下载不完整时清除记录保证下次重试——但合并结果承载着本地编辑，
+	// 此时保留记录优先（否则下次下载会把合并结果当无基线文件覆写掉）
+	if len(failedAssets) > 0 && !mergeApplied {
 		version = ""
 	}
-	recordDownloadVersion(docToken, outputPath, version, parser.RefDocs)
+	recordSyncPoint(docToken, outputPath, version, []byte(hashContent), remoteBodyForBase, conflictPending, parser.RefDocs)
+
+	if conflictPending {
+		return nil, &core.MergeConflictError{Path: outputPath}
+	}
+	dlReport.AddDoc(outputPath, title, false)
+	if mergeApplied {
+		fmt.Fprintf(dlProgress, "已合并远端改动（无冲突）；本地仍含未上传内容，可运行 larkdown upload 推送\n")
+	}
 
 	if len(failedAssets) > 0 {
 		total := len(parser.ImgTokens) + len(parser.FileTokens)
@@ -378,8 +449,9 @@ func lookupDownloadRecord(documentID, outputDir string) *core.DownloadRecord {
 	return core.LookupDownloadRecord(cp, documentID, absDir)
 }
 
-// recordDownloadVersion 把本次下载写入版本边车（best-effort，失败仅告警不影响下载结果）。
-func recordDownloadVersion(documentID, outputPath, version string, refs []core.DocRef) {
+// recordSyncPoint 把本次下载/合并的同步点写入版本边车（best-effort，失败仅告警不影响下载结果）。
+// written 为最终写盘全文（算内容 hash），baseBody 为远端渲染正文（三方合并的公共祖先快照）。
+func recordSyncPoint(documentID, outputPath, version string, written []byte, baseBody string, conflict bool, refs []core.DocRef) {
 	cp, err := core.DefaultCachePaths()
 	if err != nil {
 		return
@@ -388,9 +460,44 @@ func recordDownloadVersion(documentID, outputPath, version string, refs []core.D
 	if err != nil {
 		return
 	}
-	if err := core.RecordDownloadVersion(cp, documentID, absPath, version, refs); err != nil {
+	rec := core.DownloadRecord{Path: absPath, Version: version, RefsRecorded: true, Refs: refs}
+	if version != "" {
+		rec.ContentHash = core.ContentHash(written)
+		rec.Conflict = conflict
+	}
+	if err := core.RecordSyncPoint(cp, documentID, rec, baseBody); err != nil {
 		log.Printf("警告: 记录下载版本失败: %v", err)
 	}
+}
+
+// mergeLocalRemote 执行 download --merge 的三方合并：base 取同步点快照正文，
+// local 为本地文件、remoteBody 为本次远端渲染正文（与本次写入的 base 快照同源）；
+// 合并输出重新挂 frontmatter，并按本地拼写回填围栏 info（合并输出是归一化形态）。
+// 返回（最终写盘全文, 是否有冲突, error）。
+func mergeLocalRemote(documentID, outputDir string, localContent []byte, remoteBody, frontMatter string) (string, bool, error) {
+	cp, err := core.DefaultCachePaths()
+	if err != nil {
+		return "", false, err
+	}
+	absDir, err := filepath.Abs(outputDir)
+	if err != nil {
+		return "", false, err
+	}
+	baseBody, ok := core.ReadBaseSnapshot(cp, documentID, absDir)
+	if !ok {
+		return "", false, fmt.Errorf("缺少同步点 base 快照（旧版边车记录或缓存已清理），无法三方合并：可改用 --theirs 覆写，或先 larkdown diff 查看差异手动合并后 upload")
+	}
+	_, localBody, err := core.ParseFrontMatter(string(localContent))
+	if err != nil {
+		localBody = string(localContent)
+	}
+	out, err := core.MergeMarkdown(baseBody, localBody, remoteBody, outputDir)
+	if err != nil {
+		return "", false, fmt.Errorf("三方合并失败: %w（可改用 --theirs 覆写，或先 larkdown diff 查看差异手动合并后 upload）", err)
+	}
+	merged := strings.TrimRight(out.Body, "\n") + "\n" + frontMatter
+	merged = core.PreserveLocalFenceInfo(string(localContent), merged)
+	return merged, out.Conflicts, nil
 }
 
 // downloadDocuments 递归下载文件夹。seen 非 nil 时收集远端存在的文档 token（mirror 清理用）。
@@ -414,7 +521,7 @@ func downloadDocuments(ctx context.Context, client *core.Client, url string, see
 		if err != nil {
 			return err
 		}
-		opts := DownloadOpts{outputDir: folderPath, comments: dlOpts.comments, noDiff: dlOpts.noDiff, force: dlOpts.force, refs: dlOpts.refs}
+		opts := dlOpts.childOpts(folderPath)
 		for _, file := range files {
 			if file.Type == "folder" {
 				_folderPath := filepath.Join(folderPath, file.Name)
@@ -499,7 +606,7 @@ func downloadWikiNodeRecursive(ctx context.Context, client *core.Client,
 			}
 			switch n.ObjType {
 			case "docx":
-				opts := DownloadOpts{outputDir: folderPath, comments: dlOpts.comments, noDiff: dlOpts.noDiff, force: dlOpts.force, refs: dlOpts.refs}
+				opts := dlOpts.childOpts(folderPath)
 				wg.Add(1)
 				semaphore <- struct{}{}
 				go func(_url string, _folderPath string) {
@@ -639,6 +746,12 @@ func handleDownloadCommand(urls []string) error {
 	for _, url := range urls {
 		if err := downloadOneTarget(ctx, client, url, seen); err != nil {
 			if len(urls) == 1 {
+				// 分叉拒绝 / 合并冲突属用户可自助解决的状态，走 exitError 通道不上报 Sentry
+				var de *core.DivergedError
+				var mce *core.MergeConflictError
+				if stderrors.As(err, &de) || stderrors.As(err, &mce) {
+					return exitWithMessage(err.Error(), 1)
+				}
 				return err
 			}
 			log.Printf("警告: %s 下载失败: %v", url, err)
@@ -735,7 +848,7 @@ func downloadOneTarget(ctx context.Context, client *core.Client, url string, see
 			displayName := nodeDisplayName(node.Title, node.NodeToken)
 
 			// 先下载根节点自身（不递归）
-			rootOpts := DownloadOpts{outputDir: opts.outputDir, comments: opts.comments, noDiff: opts.noDiff, force: opts.force, refs: opts.refs}
+			rootOpts := opts.childOpts(opts.outputDir)
 			if _, rootErr := downloadDocument(ctx, client, url, &rootOpts); rootErr != nil {
 				log.Printf("警告: 根节点下载失败，继续下载子节点: %v", rootErr)
 			}

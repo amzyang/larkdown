@@ -298,6 +298,15 @@ just build                                                   # 产出仓库根�
 - 全量测试
 - CLI 构建
 
+### 同步守卫与三方合并（download --merge / --theirs, upload --ours）
+
+下载版本边车（`download_manifest.go`）即**同步点**记录：`version`（远端版本）+ `content_hash`（写盘产物全文 SHA-256，检测本地编辑）+ base 快照（`downloads/<doc_id>.<dir哈希12>.base.md`，同步点远端渲染正文，三方合并的公共祖先）。download 写盘、upload 成功（含新建）都会刷新同步点；upload 刷新时 `RefsRecorded=false`（上传路径不采集 refs，缺一条会让 `--follow` 的 prune 误删 `_refs/`，下次 follow 重下补录）。
+
+- **download 侧守卫**（`cmd/download.go`）：`ClassifySync`（`core/sync.go`）按「本地 hash × 远端版本」四象限判定；本地被编辑且将覆写不同内容 → 默认拒绝（`DivergedError`，exit 1），`--theirs` 放弃本地编辑、`--merge` 三方合并。回收站移动（标题变更旧文件）在守卫放行后才执行。mirror 与 `_refs/` 是单向镜像语义，固定 `theirs`，不进守卫。
+- **三方合并**（`core/merge3.go`，`github.com/epiclabs-io/diff3` 行级 LCS）：base/local/remote 三份**都过 `NormalizeMarkdown`** 再 merge——未编辑区域字节相同、归一后仍相同（不引入假冲突）；手写拼写 vs 渲染产物的噪音（upload 建立的 base 是手写形态）靠归一化对消，这一步是 load-bearing。输出为归一化形态，围栏拼写经 `PreserveLocalFenceInfo` 回填。冲突写 git 风格标记（整行 `<<<<<<< local` / `>>>>>>> remote`，检测按自产标签精确匹配、代码块中 `<<<<<<< HEAD` 不误伤），边车记 `conflict: true`，命令 exit 1（`MergeConflictError`）。干净合并后 version/base 推进到远端新版本，本地相对 base 的差异恰为「待 upload 的本地改动」，直接 `upload` 即收敛。
+- **upload 侧守卫**（`uploader.go` 的 `updateDocument`）：有同步点记录（`lookupSyncRecord` 要求记录路径与文件一致）时，`conflict` 标志 + 标记仍在 → `ConflictPendingError` 拒绝；远端版本 ≠ 记录版本 → `SyncDriftError` 拒绝（`--ours` 强制、dry-run 降级警告；`remoteProbe` 复用探活结果省 API 调用）。补链二次上传（`repairOneFile`）固定 `Ours`（wiki `obj_edit_time` 异步滞后会造成假阳性）。无记录 → 维持「本地赢」旧行为。
+- 版本比较含评论引起的 revision 变化，**评论也会触发漂移拒绝**（已知松弛，`--ours` 或 `--merge` 均可解）；`DivergedError`/`MergeConflictError`/`SyncDriftError`/`ConflictPendingError` 均属用户可自助错误，cmd 层转 `exitWithMessage` 不上报 Sentry。素材下载失败时若本次做过合并，保留记录优先于清记录重试（合并结果承载本地编辑，不能当无基线覆写）。
+
 ### 下载跳过（未变化文档）
 
 重复下载时按中心化边车 `~/.cache/feishu2md/downloads/<document_id>.yaml`（`download_manifest.go`）记录的「输出目录 → 产物路径 + 远程版本 + 正文引用」跳过未变化文档，仅需一次轻量 `GetDocxDocument`（`--follow` 时回放记录中的引用；旧记录缺引用则重下补录）。版本标记（`DownloadVersion`）：Wiki 用 `obj_edit_time.revision_id`（revision_id 覆盖内容编辑与评论、obj_edit_time 覆盖白板编辑），普通 docx 仅 `revision_id`（纯白板编辑感知不到）。`download --force` 强制重新下载；素材下载不完整时不落记录，下次自动重试。属可重建缓存（走 `CachePaths`，与 boards/media 的 `StatePaths` 相对），删除仅导致下次重新下载。

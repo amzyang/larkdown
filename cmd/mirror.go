@@ -110,13 +110,15 @@ func handleMirrorCommand(urlArg string) error {
 		return fmt.Errorf("--follow-depth 必须 >= 1")
 	}
 
-	// mirror 复用 download 的全局选项：固定递归 + 关闭 diff 输出（索引单独由各同步路径生成）
+	// mirror 复用 download 的全局选项：固定递归 + 关闭 diff 输出（索引单独由各同步路径生成）。
+	// mirror 是单向只下载镜像，本地不应编辑，固定远端赢（theirs），不进分叉保护。
 	dlOpts = DownloadOpts{
 		outputDir: outputDir,
 		recursive: true,
 		comments:  mirrorOpts.comments,
 		noDiff:    true,
 		force:     mirrorOpts.force,
+		theirs:    true,
 	}
 	dlReport = newDownloadReport()
 	if follow {

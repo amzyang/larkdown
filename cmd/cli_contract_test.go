@@ -51,6 +51,8 @@ func TestCommandTreeContract(t *testing.T) {
 			"no-comments":  {Def: "false"},
 			"no-diff":      {Def: "false"},
 			"force":        {Short: "f", Def: "false"},
+			"theirs":       {Def: "false"},
+			"merge":        {Def: "false"},
 			"follow":       {Def: "false"},
 			"follow-depth": {Def: "1"},
 			"json":         {Def: "false"},
@@ -78,6 +80,7 @@ func TestCommandTreeContract(t *testing.T) {
 			"full":        {Def: "false"},
 			"dry-run":     {Def: "false"},
 			"verbose":     {Short: "v", Def: "false"},
+			"ours":        {Def: "false"},
 			"json":        {Def: "false"},
 		}},
 		"publish": {Flags: map[string]flagSpec{

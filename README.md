@@ -162,9 +162,17 @@ larkdown download --json <url>             # stdout 输出汇总 JSON，进度�
 | `--no-comments`  | -    | false  | 排除文档评论（优先于 `--comments`）   |
 | `--no-diff`      | -    | false  | 下载时不显示 diff 输出                |
 | `--force`        | `-f` | false  | 强制重新下载未变化的文档              |
+| `--theirs`       | -    | false  | 本地文件被编辑过时仍以远端为准覆写（放弃本地编辑；与 `--merge` 互斥） |
+| `--merge`        | -    | false  | 本地文件被编辑过时做三方合并（diff3），冲突段写入 `<<<<<<< local` 标记并以退出码 1 结束 |
 | `--follow`       | -    | false  | 一并下载正文引用的文档到 `_refs/`     |
 | `--follow-depth` | -    | 1      | 引用跟随层数（需配合 `--follow`）     |
 | `--json`         | -    | false  | 输出机读 JSON 汇总（documents/files/failed）；进度改道 stderr，隐含 `--no-diff` |
+
+> **分叉保护**：download 会记录每次同步点（远端版本 + 本地产物指纹）。本地文件被编辑过而
+> download 将覆写它时（远端也变了即「分叉」），默认**拒绝覆写**并提示三条出路：`--merge`
+> 三方合并、`--theirs` 放弃本地编辑、`larkdown diff` 先看差异。`--merge` 的冲突以 git 风格
+> 标记写入文件，解决标记后 `larkdown upload` 推送即收敛；标记未解决时 upload 会拒绝。
+> 镜像（`mirror`）与引用缓存（`_refs/`）语义为单向只读镜像，不进分叉保护。
 
 #### mirror 命令
 
@@ -214,9 +222,15 @@ larkdown upload --json a.md b.md          # 多文件 JSON 汇总 {documents, fa
 | `--full`    | -    | false      | 全量更新（删除远端所有块后重建）         |
 | `--dry-run` | -    | false      | 预览增量 diff，不修改远端（与 `--full` 互斥） |
 | `--verbose` | `-v` | false      | dry-run 时连同未变化的块一起展示         |
+| `--ours`    | -    | false      | 远端自上次同步后已变化时仍以本地为准强制上传（远端未同步的改动将被覆盖） |
 | `--json`    | -    | false      | 输出机读 JSON（单文件为 `{file,is_new,url}`，多文件为汇总 `{documents:[{file,is_new,url}],failed:[{ref,error}],link_repairs:[{file,ok,error?}]}`）；上传进度改道 stderr（与 `--dry-run` 互斥） |
 
 > 更新已有文档默认为**增量更新**（仅修改变化的块）；如需全量重建请使用 `--full`。旧拼写 `--dryrun` 已移除，请使用 `--dry-run`。多文件时顺序上传、单项失败告警后继续：全部成功退出码 0、全部失败 1、部分成功 3。
+>
+> **远端漂移保护**：存在同步点记录（下载或上一次上传建立）时，upload 会先比对远端版本；
+> 远端自上次同步后已变化（协作者编辑或新增评论）则默认**拒绝上传**以免回滚远端改动——
+> 先 `larkdown download --merge` 合并再传，或加 `--ours` 以本地为准强制上传。
+> 从未 download 过、也未由本机上传建立记录的文件不受影响（维持「本地赢」旧行为）。
 >
 > **文档互引自动补链**：正文中指向本地 `.md` 文件的链接，目标已上传（frontmatter 有 `source`）时转为飞书文档链接，未上传则降级为纯文本。多文件上传会在全部文件传完后自动检测「降级引用的目标已在本批次上传」的文件，**二次增量上传补链**（终端会提示 `二次上传补链`），互引成环也能收敛；补链失败仅告警不影响退出码，重跑一次 `larkdown upload` 即可修复。`--dry-run` 只提示将补链的文件，不执行。
 

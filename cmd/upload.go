@@ -21,6 +21,7 @@ type UploadOpts struct {
 	incremental     bool
 	dryRun          bool
 	verbose         bool
+	ours            bool // 远端自上次同步点后已变化时仍以本地为准强制上传
 	json            bool // 输出机读 JSON（file/is_new/url），上传进度改道 stderr
 }
 
@@ -104,6 +105,15 @@ func absPath(p string) string {
 	return abs
 }
 
+// isUserResolvableUploadErr 判断错误是否属于用户可自助解决的上传拒绝
+// （不上报 Sentry）：source 目标已删/不存在、远端漂移、合并冲突未解决。
+func isUserResolvableUploadErr(err error) bool {
+	var sge *core.SourceGoneError
+	var drift *core.SyncDriftError
+	var pending *core.ConflictPendingError
+	return errors.As(err, &sge) || errors.As(err, &drift) || errors.As(err, &pending)
+}
+
 // finalize 决定最终退出状态：无失败 → firstErr 原样（通常 nil）；有失败且有产出 →
 // 部分成功（exit 3，用户可自助场景，不上报 Sentry）；有失败且零产出 → 整体失败（exit 1）。
 func (r *uploadReport) finalize(firstErr error) error {
@@ -147,10 +157,10 @@ func handleUploadCommand(files []string) error {
 		}
 		result, err := uploadOneFile(ctx, client, filePath)
 		if err != nil {
-			// source 目标已删/不存在属用户可自助解决的错误，走 exitError 通道不上报 Sentry
-			var sge *core.SourceGoneError
+			// source 目标已删/不存在、远端漂移、冲突未解决均属用户可自助解决的错误，
+			// 走 exitError 通道不上报 Sentry
 			if len(files) == 1 {
-				if errors.As(err, &sge) {
+				if isUserResolvableUploadErr(err) {
 					return exitWithMessage(err.Error(), 1)
 				}
 				return err
@@ -159,7 +169,7 @@ func handleUploadCommand(files []string) error {
 			report.failed = append(report.failed, reportFailure{Ref: filePath, Error: err.Error()})
 			outcomes = append(outcomes, uploadOutcome{file: filePath, ok: false})
 			if firstErr == nil {
-				if errors.As(err, &sge) {
+				if isUserResolvableUploadErr(err) {
 					firstErr = exitWithMessage(err.Error(), 1)
 				} else {
 					firstErr = err
@@ -251,7 +261,9 @@ func repairOneFile(ctx context.Context, client *core.Client, filePath string) (*
 	if uploadOpts.json {
 		uploader.SetOutput(os.Stderr)
 	}
-	return uploader.Upload(ctx, filePath, core.UploadOptions{Incremental: true})
+	// 补链是对刚上传内容的立即重传，漂移检查无增益且 wiki obj_edit_time
+	// 异步滞后可能造成假阳性拒绝，固定 Ours 跳过
+	return uploader.Upload(ctx, filePath, core.UploadOptions{Incremental: true, Ours: true})
 }
 
 // uploadOneFile 上传单个文件。每个文件新建 Uploader，隔离 pendingBoardMappings/
@@ -273,5 +285,6 @@ func uploadOneFile(ctx context.Context, client *core.Client, filePath string) (*
 		Incremental:     uploadOpts.incremental,
 		DryRun:          uploadOpts.dryRun,
 		Verbose:         uploadOpts.verbose,
+		Ours:            uploadOpts.ours,
 	})
 }

@@ -33,7 +33,9 @@ type DownloadManifest struct {
 // 与旧版记录「未采集」：--follow 遇旧记录视为过期，重新下载一次补录。
 type DownloadRecord struct {
 	Path         string   `yaml:"path"`                    // 下载产物绝对路径（filepath.Clean）
-	Version      string   `yaml:"version"`                 // 下载时的远程版本（见 DownloadVersion）
+	Version      string   `yaml:"version"`                 // 同步点的远程版本（见 DownloadVersion）
+	ContentHash  string   `yaml:"content_hash,omitempty"`  // 同步点写盘产物全文 SHA-256，用于检测本地编辑；旧版记录无此字段 → 无基线
+	Conflict     bool     `yaml:"conflict,omitempty"`      // 上次 --merge 写入了冲突标记且尚未确认解决（upload 据此拒绝）
 	RefsRecorded bool     `yaml:"refs_recorded,omitempty"` // 本条记录是否已采集正文引用
 	Refs         []DocRef `yaml:"refs,omitempty"`          // 正文引用的 docx/wiki 文档
 }
@@ -92,14 +94,13 @@ func (m *DownloadManifest) lookupByDir(documentID, absDir string) *DownloadRecor
 
 // upsertByDir 插入或更新一条记录，按产物所在目录去重（标题变更导致的重命名会覆盖旧条目）。
 // document 变更时清空旧记录。
-func (m *DownloadManifest) upsertByDir(documentID, absPath, version string, refs []DocRef) {
+func (m *DownloadManifest) upsertByDir(documentID string, rec DownloadRecord) {
 	if m.DocumentID != documentID {
 		m.DocumentID = documentID
 		m.Entries = nil
 	}
-	absPath = filepath.Clean(absPath)
-	dir := filepath.Dir(absPath)
-	rec := DownloadRecord{Path: absPath, Version: version, RefsRecorded: true, Refs: refs}
+	rec.Path = filepath.Clean(rec.Path)
+	dir := filepath.Dir(rec.Path)
 	for i := range m.Entries {
 		if filepath.Dir(m.Entries[i].Path) == dir {
 			m.Entries[i] = rec
@@ -132,10 +133,11 @@ func LookupDownloadRecord(cp CachePaths, documentID, absDir string) *DownloadRec
 	return m.lookupByDir(documentID, absDir)
 }
 
-// RecordDownloadVersion 记录一次下载：version 非空则 upsert（refs 为下载时 parser
-// 采集的正文引用，随记录持久化）；为空（素材下载不完整）则清除该目录的记录，
-// 保证下次重新下载重试。
-func RecordDownloadVersion(cp CachePaths, documentID, absPath, version string, refs []DocRef) error {
+// RecordSyncPoint 记录一次同步点——download 写盘或 upload 成功后「本地文件与远端一致
+// （或已知对应关系）」的时刻：rec.Version 非空则 upsert 记录并写 base 快照（正文，
+// 供 download --merge 做三方合并的公共祖先）；为空（素材下载不完整）则清除该目录的
+// 记录与快照，保证下次重新下载重试。base 快照属可重建缓存，丢失仅导致无法自动合并。
+func RecordSyncPoint(cp CachePaths, documentID string, rec DownloadRecord, baseBody string) error {
 	m, err := ReadDownloadManifest(cp, documentID)
 	if err != nil {
 		return err
@@ -143,10 +145,25 @@ func RecordDownloadVersion(cp CachePaths, documentID, absPath, version string, r
 	if m == nil {
 		m = &DownloadManifest{DocumentID: documentID}
 	}
-	if version == "" {
-		m.removeByDir(documentID, filepath.Dir(absPath))
+	absDir := filepath.Dir(filepath.Clean(rec.Path))
+	if rec.Version == "" {
+		m.removeByDir(documentID, absDir)
+		os.Remove(cp.DownloadBaseFile(documentID, absDir))
 	} else {
-		m.upsertByDir(documentID, absPath, version, refs)
+		m.upsertByDir(documentID, rec)
+		if err := writeFileAtomic(cp.DownloadBaseFile(documentID, absDir), []byte(baseBody)); err != nil {
+			return err
+		}
 	}
 	return WriteDownloadManifest(cp, documentID, m)
+}
+
+// ReadBaseSnapshot 读取 documentID 在 absDir 目录下的同步点 base 快照正文；
+// 不存在或读取失败返回 ("", false)。
+func ReadBaseSnapshot(cp CachePaths, documentID, absDir string) (string, bool) {
+	data, err := os.ReadFile(cp.DownloadBaseFile(documentID, absDir))
+	if err != nil {
+		return "", false
+	}
+	return string(data), true
 }

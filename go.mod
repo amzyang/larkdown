@@ -9,6 +9,7 @@ require (
 	github.com/alecthomas/chroma/v2 v2.27.0
 	github.com/browserutils/kooky v0.2.10
 	github.com/charmbracelet/colorprofile v0.4.3
+	github.com/epiclabs-io/diff3 v0.0.0-20260520111523-3b1669897fb1
 	github.com/getsentry/sentry-go v0.48.0
 	github.com/gofrs/flock v0.13.0
 	github.com/pkg/errors v0.9.1

@@ -32,11 +32,13 @@ func runFollowPhase(ctx context.Context, client *core.Client, outputDir string,
 		OnVisit: func(r core.DocRef) { seen.Add(r.Token) },
 		Fetch: func(r core.DocRef) ([]core.DocRef, error) {
 			sub := core.NewRefCollector()
+			// _refs/ 是引用缓存，本地不应编辑，固定远端赢（theirs），不进分叉保护
 			opts := DownloadOpts{
 				outputDir: refsDir,
 				comments:  base.comments,
 				noDiff:    true,
 				force:     base.force,
+				theirs:    true,
 				refs:      sub,
 			}
 			meta, err := downloadDocument(ctx, client, r.URL, &opts)

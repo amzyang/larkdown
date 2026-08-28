@@ -26,7 +26,7 @@ func TestDownloadManifestRoundTrip(t *testing.T) {
 	}
 
 	// 写入后可查回
-	if err := RecordDownloadVersion(cp, docID, path, "1700000000.42", nil); err != nil {
+	if err := RecordSyncPoint(cp, docID, DownloadRecord{Path: path, Version: "1700000000.42", RefsRecorded: true}, ""); err != nil {
 		t.Fatal(err)
 	}
 	rec := LookupDownloadRecord(cp, docID, filepath.Dir(path))
@@ -50,10 +50,10 @@ func TestDownloadManifestUpsertByDir(t *testing.T) {
 	dir := filepath.Join("/", "out")
 
 	// 同目录重命名（标题变更）应覆盖旧条目而非新增
-	if err := RecordDownloadVersion(cp, docID, filepath.Join(dir, "旧标题.md"), "v1", nil); err != nil {
+	if err := RecordSyncPoint(cp, docID, DownloadRecord{Path: filepath.Join(dir, "旧标题.md"), Version: "v1", RefsRecorded: true}, ""); err != nil {
 		t.Fatal(err)
 	}
-	if err := RecordDownloadVersion(cp, docID, filepath.Join(dir, "新标题.md"), "v2", nil); err != nil {
+	if err := RecordSyncPoint(cp, docID, DownloadRecord{Path: filepath.Join(dir, "新标题.md"), Version: "v2", RefsRecorded: true}, ""); err != nil {
 		t.Fatal(err)
 	}
 	m, err := ReadDownloadManifest(cp, docID)
@@ -65,7 +65,7 @@ func TestDownloadManifestUpsertByDir(t *testing.T) {
 	}
 
 	// 不同目录各自独立
-	if err := RecordDownloadVersion(cp, docID, filepath.Join("/", "other", "标题.md"), "v3", nil); err != nil {
+	if err := RecordSyncPoint(cp, docID, DownloadRecord{Path: filepath.Join("/", "other", "标题.md"), Version: "v3", RefsRecorded: true}, ""); err != nil {
 		t.Fatal(err)
 	}
 	m, _ = ReadDownloadManifest(cp, docID)
@@ -79,11 +79,11 @@ func TestDownloadManifestClearOnEmptyVersion(t *testing.T) {
 	const docID = "doccnXXX"
 	path := filepath.Join("/", "out", "标题.md")
 
-	if err := RecordDownloadVersion(cp, docID, path, "v1", nil); err != nil {
+	if err := RecordSyncPoint(cp, docID, DownloadRecord{Path: path, Version: "v1", RefsRecorded: true}, ""); err != nil {
 		t.Fatal(err)
 	}
 	// version 为空（素材下载不完整）→ 清除记录
-	if err := RecordDownloadVersion(cp, docID, path, "", nil); err != nil {
+	if err := RecordSyncPoint(cp, docID, DownloadRecord{Path: path, Version: "", RefsRecorded: true}, ""); err != nil {
 		t.Fatal(err)
 	}
 	if rec := LookupDownloadRecord(cp, docID, filepath.Dir(path)); rec != nil {
@@ -97,7 +97,7 @@ func TestDownloadManifestRecordsRefs(t *testing.T) {
 	path := filepath.Join("/", "out", "标题.md")
 
 	refs := []DocRef{{Token: "TokA", ObjType: "docx", URL: "https://x.feishu.cn/docx/TokA", Title: "规范"}}
-	if err := RecordDownloadVersion(cp, docID, path, "v1", refs); err != nil {
+	if err := RecordSyncPoint(cp, docID, DownloadRecord{Path: path, Version: "v1", RefsRecorded: true, Refs: refs}, ""); err != nil {
 		t.Fatal(err)
 	}
 	rec := LookupDownloadRecord(cp, docID, filepath.Dir(path))
@@ -106,7 +106,7 @@ func TestDownloadManifestRecordsRefs(t *testing.T) {
 	}
 
 	// 零引用文档同样标记已采集，与旧版「未采集」可区分
-	if err := RecordDownloadVersion(cp, docID, path, "v2", nil); err != nil {
+	if err := RecordSyncPoint(cp, docID, DownloadRecord{Path: path, Version: "v2", RefsRecorded: true}, ""); err != nil {
 		t.Fatal(err)
 	}
 	rec = LookupDownloadRecord(cp, docID, filepath.Dir(path))

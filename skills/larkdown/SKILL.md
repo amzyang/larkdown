@@ -110,13 +110,17 @@ larkdown 根据 URL 路径自动识别类型，不需要额外 flag：
 | `-c, --comments`  | 包含文档评论                                                | true   |
 | `--no-comments`   | 排除文档评论（优先于 `--comments`）                         | false  |
 | `--no-diff`       | 禁用变更 diff 输出（默认下载时会显示与本地已有文件的 diff） | false  |
+| `--theirs`        | 本地文件被编辑过时仍以远端为准覆写（放弃本地编辑；与 `--merge` 互斥） | false  |
+| `--merge`         | 本地文件被编辑过时三方合并（diff3）本地与远端改动；冲突写入 `<<<<<<< local` 标记并 exit 1 | false  |
 | `--follow`        | 同时下载正文引用（@提及/链接）的 docx/wiki 文档到 `_refs/`  | false  |
 | `--follow-depth`  | 引用追踪层数（需配合 `--follow`）                           | 1      |
 | `--json`          | stdout 输出机读 JSON 汇总 `{documents:[{path,title,skipped}], files, failed}`；进度改道 stderr，隐含 `--no-diff` | false  |
 
 当传入本地 .md 文件路径时，larkdown 会从文件 frontmatter 的 `source` 字段读取原始 URL 并重新下载，输出目录默认为该文件所在目录。
 
-退出码：0 全部成功；1 失败；3 部分成功（有文档或图片/附件下载失败，详情见 `--json` 的 `failed` 数组）。
+**分叉保护**：本地文件自上次同步后被编辑过、且 download 将覆写不同内容时，默认拒绝并 exit 1（错误消息给出三条出路）。Agent 处理建议：远端为准用 `--theirs`；要保留双侧改动用 `--merge`，若 exit 1 且文件出现 `<<<<<<< local` 标记则需人工/交互式解决冲突后再 `upload`。
+
+退出码：0 全部成功；1 失败（含分叉拒绝、合并冲突）；3 部分成功（有文档或图片/附件下载失败，详情见 `--json` 的 `failed` 数组）。
 
 ### mirror
 
@@ -148,6 +152,7 @@ larkdown 根据 URL 路径自动识别类型，不需要额外 flag：
 | `-p, --parent`          | 父节点 token                       | -          |
 | `--full`                | 全量重建（删除远端所有 block 后重新上传）  | false      |
 | `--dry-run`             | 预览增量 diff，不修改远端（与 `--full` 互斥） | false      |
+| `--ours`                | 远端自上次同步后已变化时仍以本地为准强制上传（覆盖远端未同步改动） | false      |
 | `--json`                | stdout 输出机读 JSON：单文件为 `{file, is_new, url}`，多文件为汇总 `{documents:[{file,is_new,url}], failed:[{ref,error}]}`；上传进度改道 stderr（与 `--dry-run` 互斥） | false      |
 
 `--source` 与 `--space`/`--parent` 互斥。旧拼写 `--dryrun` 已移除，请使用 `--dry-run`。
@@ -158,6 +163,7 @@ larkdown 根据 URL 路径自动识别类型，不需要额外 flag：
 - **增量更新**（默认）：对比远端和本地 block 的内容签名（LCS diff），仅更新变化部分
 - **全量更新**（`--full`）：删除远端所有 block，重新上传
 - **多文件**：顺序上传；每个文件按自身 frontmatter `source` 决定更新目标，无 `source` 则按 `--space`/`--parent` 新建；单项失败告警后继续。退出码：0 全部成功 / 1 全部失败 / 3 部分成功（详情见 `--json` 的 `failed` 数组）
+- **远端漂移保护**：存在同步点记录时（该文件曾被 download 或本机上传过），远端自上次同步后已变化 → 默认拒绝并 exit 1，防止回滚远端改动。先 `larkdown download --merge <file>` 合并再传，或 `--ours` 强制以本地为准。文件仍含未解决的 `<<<<<<< local` 冲突标记时同样拒绝，解决后自动恢复
 
 ### publish
 
