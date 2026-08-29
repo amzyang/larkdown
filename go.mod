@@ -1,14 +1,13 @@
 module github.com/amzyang/larkdown
 
-go 1.26.4
-
-require github.com/chyroc/lark v0.0.114-0.20260226061401-82ff1e3935ce
+go 1.27.0
 
 require (
 	charm.land/lipgloss/v2 v2.0.6
 	github.com/alecthomas/chroma/v2 v2.27.0
 	github.com/browserutils/kooky v0.2.10
 	github.com/charmbracelet/colorprofile v0.4.3
+	github.com/chyroc/lark v0.0.114-0.20260226061401-82ff1e3935ce
 	github.com/epiclabs-io/diff3 v0.0.0-20260520111523-3b1669897fb1
 	github.com/getsentry/sentry-go v0.48.0
 	github.com/gofrs/flock v0.13.0
