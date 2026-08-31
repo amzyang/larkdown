@@ -9,8 +9,8 @@ require (
 	github.com/charmbracelet/colorprofile v0.4.3
 	github.com/chyroc/lark v0.0.114-0.20260226061401-82ff1e3935ce
 	github.com/epiclabs-io/diff3 v0.0.0-20260520111523-3b1669897fb1
-	github.com/getsentry/sentry-go v0.48.0
-	github.com/gofrs/flock v0.13.0
+	github.com/getsentry/sentry-go v0.49.0
+	github.com/gofrs/flock v0.13.1
 	github.com/pkg/errors v0.9.1
 	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2
 	github.com/spf13/cobra v1.10.2
