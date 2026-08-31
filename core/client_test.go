@@ -13,6 +13,7 @@ import (
 )
 
 func getIdAndSecretFromEnv(t *testing.T) (string, string) {
+	t.Helper()
 	appID := ""
 	appSecret := ""
 
@@ -30,6 +31,10 @@ func getIdAndSecretFromEnv(t *testing.T) (string, string) {
 		}
 		appID = config.Feishu.AppId
 		appSecret = config.Feishu.AppSecret
+	}
+
+	if appID == "" || appSecret == "" {
+		t.Skip("飞书应用凭证未配置（config 文件或 FEISHU_APP_ID/FEISHU_APP_SECRET），跳过集成测试")
 	}
 
 	return appID, appSecret
