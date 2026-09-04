@@ -21,7 +21,7 @@ larkdown 通过 **push 一个 `v*` tag** 触发 `.github/workflows/release.yml` 
 - `git branch --show-current` 确认在 `main`；`git status --short` 看工作树；`git rev-list --count origin/main..HEAD` / `..origin/main` 确认与远端领先/落后。
 
 ### 2. 提交并推送改动（若有未提交/未推送改动）
-- 未提交改动按项目 conventional commit 风格提交（`feat(scope): 中文描述`，对照 `git log` 既有风格；body 用多个 `-m` 段，避免 heredoc 以兼容 fish）。
+- 未提交改动按项目 conventional commit 风格提交（`feat(scope): 中文描述`，对照 `git log` 既有风格）。
 - `git push origin main`。
 - 若只是补打 tag、无新改动，跳过本步。
 

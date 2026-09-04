@@ -59,7 +59,7 @@ larkdown config --appId <APP_ID> --appSecret <APP_SECRET>
 
 download 命令默认在下载后显示内容变更的 diff 输出，使用 `monokai` 主题高亮。可通过配置文件修改主题：
 
-编辑 `~/.config/feishu2md/config.json`，设置 `output.diff_style` 字段：
+编辑配置文件（路径见 `larkdown auth status`），设置 `output.diff_style` 字段：
 
 ```json
 {
@@ -420,7 +420,7 @@ Skill 源码随仓库维护于 [`skills/larkdown/`](skills/larkdown/)（含 `SKI
 
 - **白板缓存**：Wiki 文档中的白板使用 `obj_edit_time` 作为缓存版本标识，普通 docx 文档不缓存
 
-- **评论权限**：需要 `drive:drive.comment:read` 和 `contact:user.base:readonly` 权限
+- **评论权限**：需要 `docs:document.comment:read` 和 `contact:user.base:readonly` 权限
 
 - **表格处理**：包含合并单元格的表格自动转换为 HTML 格式以保持结构
 

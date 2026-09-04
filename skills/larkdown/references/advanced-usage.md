@@ -17,7 +17,7 @@ brew install amzyang/tap/larkdown
 2. 在应用设置中启用「设备码授权 / Device Flow」能力（安全设置）——登录走设备码流程，无需配置重定向 URL
 3. 打开开发配置/权限管理，批量导入权限：[permissions.json](https://raw.githubusercontent.com/amzyang/larkdown/main/permissions.json)
 4. 配置应用凭证：`larkdown config --appId cli_xxxxx --appSecret xxxxx`
-5. OAuth 登录：`larkdown auth login`（打印授权 URL + 验证码并尽力打开浏览器，授权后自动保存凭证；旧命令 `larkdown login` 仍作隐藏别名可用）
+5. OAuth 登录：`larkdown auth login`（打印授权 URL + 验证码并尽力打开浏览器，授权后自动保存凭证）
 
 ## 配置文件
 

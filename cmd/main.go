@@ -468,7 +468,7 @@ func newRootCommand() *cobra.Command {
 	root.PersistentFlags().BoolVar(&globalOpts.debug, "debug", false, "Enable HTTP request/response logging to stderr (JSONL format)")
 	root.PersistentFlags().StringVar(&globalOpts.as, "as", identityUser, "Identity for Feishu API calls: user (user_access_token, default) or bot (tenant_access_token app credentials)")
 	root.PersistentFlags().StringVar(&globalOpts.sentryDSN, "sentry-dsn", "", "Sentry DSN for crash/error reporting (overrides SENTRY_DSN env and the build-time default; pass an empty value to disable)")
-	root.PersistentFlags().StringVar(&globalOpts.configPath, "config", "", "Path to the config file (overrides LARKDOWN_CONFIG env; default ~/.config/feishu2md/config.json)")
+	root.PersistentFlags().StringVar(&globalOpts.configPath, "config", "", "Path to the config file (overrides LARKDOWN_CONFIG env; default <user config dir>/feishu2md/config.json)")
 	_ = root.MarkPersistentFlagFilename("config", "json")
 	_ = root.RegisterFlagCompletionFunc("as", cobra.FixedCompletions(
 		[]cobra.Completion{identityUser, identityBot}, cobra.ShellCompDirectiveNoFileComp))

@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 larkdown 是一个飞书文档与 Markdown 双向转换的 Go CLI 工具。支持下载飞书文档为 Markdown，也支持上传 Markdown 回飞书 Wiki。
 
-> 命名说明：项目原名 `feishu2md`，现已重命名为 **larkdown**（Lark + Markdown）。Go module、二进制、CLI 命令名均为 `larkdown`；但**用户数据路径的字面量刻意保留 `feishu2md`**（`~/.config/feishu2md/`、`~/.cache/feishu2md/`、发布边车文件 `.feishu2md-publish.yaml`），以零迁移兼容老用户的已有配置/缓存/发布记录——改这些字面量会让老数据失联。
+> 命名说明：项目原名 `feishu2md`，现已重命名为 **larkdown**（Lark + Markdown）。Go module、二进制、CLI 命令名均为 `larkdown`；但**用户数据路径的字面量刻意保留 `feishu2md`**（`<UserConfigDir>/feishu2md/`、`<UserCacheDir>/feishu2md/`、发布边车文件 `.feishu2md-publish.yaml`），以零迁移兼容老用户的已有配置/缓存/发布记录——改这些字面量会让老数据失联。
 
 ## 常用命令
 
@@ -49,7 +49,7 @@ just clean          # 删除构建产物
 
 注意：CLI `larkdown upload` 路径不依赖此排版规则（goldmark 把 tight/loose list 等价处理）；此策略仅服务于"网页粘贴"这条 round-trip 通道。
 
-**表格单元格内代码块**：GFM cell 是单行行内上下文，容不下围栏代码块。下载侧渲染为 `<pre lang="x">…</pre>`（换行→`<br/>`，`&`/`<`/`|` 及 markdown 行内活性字符实体化，`parser.go` 的 `escapeCellHTMLText`）；上传侧两条解码路径都还原为 cell 内真 Code 子块（飞书 descendant API 接受 `table_cell→code`，已 E2E 验证）：GFM 表格走 `splitCellSegments`（`md2blocks.go`），goldmark **不在 AST 层解码 entity**（Text 节点保留原文），故用 `cellHTMLTextUnescaper` 手动成对反转义；合并单元格的 HTML `<table>` 走 `extractCellContent`/`extractPreText`（`md2blocks_html.go`，entity 由 x/net/html 自动解码，`<br>` 还原换行）。cell 其他子块换行同样折为 `<br/>` 不再丢弃；回归锚：`roundtrip.table_cell_code` fixture（签名收敛）。
+**表格单元格内代码块**：GFM cell 是单行行内上下文，容不下围栏代码块。下载侧渲染为 `<pre lang="x">…</pre>`（换行→`<br/>`，`&`/`<`/`|` 及 markdown 行内活性字符实体化，`parser.go` 的 `escapeCellHTMLText`）；上传侧两条解码路径都还原为 cell 内真 Code 子块（飞书 descendant API 接受 `table_cell→code`，已 E2E 验证）：GFM 表格走 `splitCellSegments`（`md2blocks.go`），goldmark **不在 AST 层解码 entity**（Text 节点保留原文），故用 `cellHTMLTextUnescaper` 手动成对反转义；合并单元格的 HTML `<table>` 走 `extractCellContent`/`extractPreText`（`md2blocks_html.go`，entity 由 x/net/html 自动解码，`<br>` 还原换行）。cell 其他子块换行同样折为 `<br/>`；回归锚：`roundtrip.table_cell_code` fixture（签名收敛）。
 
 另：download 覆写本地已有文件时，代码块围栏按**上传等价枚举**保留本地拼写（`core/preserve_fence.go` 的 `PreserveLocalFenceInfo`，issue #7）——本地 ` ```jsonc ` 与远端 JSON 枚举等价则不改写为规范名 `json`，与上传侧块签名按枚举 id 判等的语义对称；`mermaid`/`plantuml` 走特殊通道不参与。
 
@@ -58,12 +58,12 @@ just clean          # 删除构建产物
 飞书正文含 markdown 活性字符时下载产物零转义会破损/上传块类型翻转。机制成对（缺一侧签名必不收敛）：
 
 - **下载侧** `escapeMarkdownText`（`core/escape.go`，`ParseDocxTextElementTextRun` 单漏斗接入，覆盖正文/标题/列表/todo/callout/链接文本）：行内集 `\ * `` ` `` [ ] ~ < $` 任意位置 backslash 转义；`_` 仅非 intraword（两侧非字母数字才转，`snake_case`/CJK 词内零噪音）；行首集（含 TextRun 内 `\n` 后的行首，仅无样式标记元素）`# - + > | =`、数字串后 `.`/`)` 防块级翻转（`- ` 变列表、`[!NOTE]` 变 Callout、`[ ] ` 变 Todo、`===` 变 setext）；cell 上下文 `|` 全位置转 `\|`（GFM 标准，goldmark table 扩展原生支持，code span 内的 `\|` 由 goldmark 自己剥）。**不转义**：`& ! ( )`（无行内活性；goldmark 无 inline entity parser，`&` 转义反而不收敛）。
-- **上传侧** `unescapeMarkdownText`（`walkInline` 的 `*ast.Text` 单点 + `extractLinkText` + `ExtractTitle`/`ExtractHeadingsFromMarkdown`）：goldmark **解析期不剥反斜杠**（`\_` 原样留在 Text segment），须手动按 CommonMark 剥 `\`+ASCII 标点；`\`+非标点原样保留。这同时修复了手写 markdown 的 `\_` 被字面上传的旧 bug。
+- **上传侧** `unescapeMarkdownText`（`walkInline` 的 `*ast.Text` 单点 + `extractLinkText` + `ExtractTitle`/`ExtractHeadingsFromMarkdown`）：goldmark **解析期不剥反斜杠**（`\_` 原样留在 Text segment），须手动按 CommonMark 剥 `\`+ASCII 标点；`\`+非标点原样保留。
 - **raw 豁免上下文**（`Parser.rawInline`，双向对称不转义）：code 块、equation 块、`<summary>`（上传侧裸串回填）、cell `<pre>`（已有 entity 通道，防双重转义）、mermaid。InlineCode 内容仅 cell 场景转 `|`。
 - **URL destination 位不能用 backslash**（goldmark 会把 `\` 原样带进 Destination 污染上传 URL）：`utils.EscapeMarkdownLinkDest` 对解码后 URL 做最小 percent-encode 防护（空格/`()`/`<>`/`"`/`\`/控制字符），块签名双侧过 `UnescapeURL` 归一不漂移。**本地路径** destination（file/图片素材、索引 RelPath）不能 percent-encode（上传侧按原始路径查文件），含空格/括号用 `<...>` 尖括号 destination 包裹（`utils.QuoteLinkDestIfNeeded`）。
 - **裸 URL span 刻意跳过转义**（`https?://`、`www.` 起始，仅无 Link 样式的纯文本）：linkify 的 URL 正则不含 `\`，转义会把链接截成两半（比现状更糟）；链接 label 内 linkify 短路（goldmark `IsInLinkLabel`），照常全量转义——报告 bug 的 `[https://example.com/_abc](…)` 场景由此修复。
 - **entity 通道**（与 backslash 通道并存，各有解码点勿混用）：cell `<pre>` 用 `escapeCellHTMLText`↔`cellHTMLTextUnescaper`；`<cite>` 内文本用 `xmlEscapeText`（markdown 活性字符实体化）↔ `flushCite` 的 `html.UnescapeString`。
-- **围栏防提前闭合**：代码块围栏按内容动态加长（`codeFence`，max(3, 最长反引号 run+1)），内容含 ``` 不再逃逸。
+- **围栏防提前闭合**：代码块围栏按内容动态加长（`codeFence`，max(3, 最长反引号 run+1)），内容含 ``` 也不会提前闭合围栏。
 - 回归锚：`testdocx.escape` fixture 同时锁 parser golden 与 round-trip 签名全 Equal。
 
 **已知豁免**（修复成本/收益不匹配或需独立设计，改动相关逻辑时注意别顺手"修复"造成签名漂移）：裸 URL 的 linkify 签名漂移（上传后多出 Link 样式，存量行为）；公式内容含 `$`/首尾空格/换行（MathExtension 语法边界）；TextRun 内 `\n` 逃逸 heading/quote/list 结构（需续行前缀机制）；评论附录 marker 与正文碰撞（`docmeta.go` 的 `commentsAppendixMarker` 朴素子串匹配）；`ExtractTitle`/`RemoveFirstHeading` 不跳代码围栏；`<details>` summary 含 `</summary>` 字面量；heading 7-9 级超出 CommonMark 上限；行首 ≥4 空格成 indented code；inline code 含反引号（testdocx.2 白名单）；cell 文本以 `\` 结尾（goldmark table 边界扫描 quirk）。
@@ -125,8 +125,8 @@ core/          # 核心业务逻辑
   mirror.go    # 镜像支撑：.larkdown-mirror.yaml 边车、镜像 CLAUDE.md 生成、陈旧文档清理
   refs.go      # --follow 引用模型：DocRef 过滤构造（仅 docx/wiki）+ 并发安全 RefCollector
   follow.go    # FollowRefs：BFS 纯逻辑（Skip/OnVisit/Fetch 回调注入，防环、失败继续）
-  cache.go     # 图片缓存（~/.cache/feishu2md/images/）
-  config.go    # 配置管理（~/.config/feishu2md/config.json）
+  cache.go     # 图片缓存（os.UserCacheDir()/feishu2md/images/，macOS 为 ~/Library/Caches）
+  config.go    # 配置管理（os.UserConfigDir()/feishu2md/config.json，macOS 为 ~/Library/Application Support）
   oauth.go     # OAuth 设备码流程（device flow）：申请设备码、轮询换 token、v2 刷新、token 撤销（纯裸 HTTP）
   comment.go   # 文档评论获取与 Markdown 渲染（--comments 选项）
 
@@ -141,7 +141,7 @@ testdata/      # 测试数据：JSON (DocxBlock) + MD (期望输出) golden file
 
 `publish` 的 `--share` flag（`selected|tenant|public`）经官方 open API `spark/v1/apps/{id}/access-scope`（PUT，user_access_token，`spark:app:write`）提交访问档位，映射对齐 lark-cli / 官方 `oapi-sdk-go`：`selected`→不调用、`tenant`→`Tenant`、`public`→`All`（本租户可能禁用公开，返回 40000，降级为 `ScopeErr` 警告不阻断发布）。默认（未传 `--share`）仅新建应用时设 `Tenant`（机构可见），更新已有应用不覆盖权限（`resolveShareScope`，`core/miaoda.go`）。
 
-**行为（已 E2E 验证生效）**：`--share tenant` 经 access-scope PUT `Tenant` 会同步到网页「App availability」（→ All org members），实测生效并覆盖此前的手动设置；GET 读回同接口（需 `spark:app:read`）反映 open API 侧即时值。larkdown 的实现与 lark-cli / 官方 `oapi-sdk-go` 的 `spark/v1 UpdateAppVisibility` 逐字一致（端点/body/token/scope 全核对）。**注意坑**：妙搭侧同步偶有**传播延迟**，且短时间频繁改动会触发限流（`k_perm_ec_000009`，网页反复手动切换尤甚），故刚发布后 UI 可能短暂滞后——排查时以 GET access-scope 或稍后刷新为准，勿据一次即时 UI 误判为「不生效」（本功能开发时曾因延迟+限流+反复手动操作误判过）。`renderShareNotice`（`cmd/highlight.go`）对 `Tenant/All` 档确认已设并提醒暴露面 + 给出 `--share selected` 收窄方式。终端配色用 **lipgloss v2**（`charm.land/lipgloss/v2`），降级由 `lipgloss.Writer`（colorprofile）按 TTY/`NO_COLOR` 自动处理。
+**行为（已 E2E 验证生效）**：`--share tenant` 经 access-scope PUT `Tenant` 会同步到网页「App availability」（→ All org members），实测生效并覆盖此前的手动设置；GET 读回同接口（需 `spark:app:read`）反映 open API 侧即时值。larkdown 的实现与 lark-cli / 官方 `oapi-sdk-go` 的 `spark/v1 UpdateAppVisibility` 逐字一致（端点/body/token/scope 全核对）。**注意坑**：妙搭侧同步偶有**传播延迟**，且短时间频繁改动会触发限流（`k_perm_ec_000009`，网页反复手动切换尤甚），故刚发布后 UI 可能短暂滞后——排查时以 GET access-scope 或稍后刷新为准，勿据一次即时 UI 误判为「不生效」。`renderShareNotice`（`cmd/highlight.go`）对 `Tenant/All` 档确认已设并提醒暴露面 + 给出 `--share selected` 收窄方式。终端配色用 **lipgloss v2**（`charm.land/lipgloss/v2`），降级由 `lipgloss.Writer`（colorprofile）按 TTY/`NO_COLOR` 自动处理。
 
 ### Sentry 错误上报边界
 
@@ -232,7 +232,7 @@ larkdown config init
 #    b) 手动：在 open.feishu.cn 创建应用后填入凭证
 larkdown config --appId <id> --appSecret <secret>
 
-# 2. OAuth 设备码流程登录获取 user_access_token（默认身份必需；旧命令 larkdown login 仍作隐藏别名可用）
+# 2. OAuth 设备码流程登录获取 user_access_token（默认身份必需）
 #    打印 verification URL + user code（并尽力自动打开浏览器），授权后阻塞轮询直到完成；无需本地回调 server
 larkdown auth login
 #    两段式（agent/CI/无头友好）：先 --no-wait 立即返回 device_code+URL，人授权后再 --device-code 换令牌；--json 输出机读事件
@@ -253,7 +253,7 @@ larkdown auth logout
 
 ### OAuth 配置要求
 
-`larkdown auth login` 走 OAuth 2.0 设备码流程（device flow），**无需配置重定向 URL、无需本地回调 server**（原 `http://localhost:9999/callback` 不再需要）：
+`larkdown auth login` 走 OAuth 2.0 设备码流程（device flow），**无需配置重定向 URL、无需本地回调 server**：
 
 - 进入应用 -> 安全设置，确认已**启用「设备码授权 / Device Flow」能力**（否则申请设备码会直接报错）
 - 确认「必需的飞书权限」已开通/审批（设备码申请携带的 scope 需与之匹配）
@@ -263,6 +263,8 @@ larkdown auth logout
 
 ### 必需的飞书权限
 
+权威清单是仓库根的 `permissions.json`（飞书后台可批量导入）；下列为按功能标注的常用 scope：
+
 - `docx:document:readonly` - 读取文档
 - `docs:document.media:download` - 下载图片
 - `drive:file:readonly` - 列出文件夹内容
@@ -270,7 +272,7 @@ larkdown auth logout
 - `bitable:app:readonly` - 读取多维表格
 - `drive:export:readonly` - 导出电子表格
 - `board:whiteboard:node:read` - 读取白板节点（下载白板图片需要）
-- `drive:drive.comment:read` - 读取文档评论（--comments 选项需要）
+- `docs:document.comment:read` - 读取文档评论（--comments 选项需要）
 - `contact:contact.base:readonly` - 获取用户基本信息
 - `contact:user.basic_profile:readonly` - 批量获取用户基本信息（正文 @mention 与评论显示真实姓名需要；走 `basic_batch`，不校验通讯录授权范围。该 scope 为后加入，refresh 不扩权，老 token 需重新 `larkdown auth login`）
 - `search:docs:read` - 搜索云文档/Wiki（search 命令需要；仅 user_access_token 通道。该 scope 为后加入，refresh 不扩权，老 token 需重新 `larkdown auth login`）
@@ -309,11 +311,11 @@ just build                                                   # 产出仓库根�
 
 ### 下载跳过（未变化文档）
 
-重复下载时按中心化边车 `~/.cache/feishu2md/downloads/<document_id>.yaml`（`download_manifest.go`）记录的「输出目录 → 产物路径 + 远程版本 + 正文引用」跳过未变化文档，仅需一次轻量 `GetDocxDocument`（`--follow` 时回放记录中的引用；旧记录缺引用则重下补录）。版本标记（`DownloadVersion`）：Wiki 用 `obj_edit_time.revision_id`（revision_id 覆盖内容编辑与评论、obj_edit_time 覆盖白板编辑），普通 docx 仅 `revision_id`（纯白板编辑感知不到）。`download --force` 强制重新下载；素材下载不完整时不落记录，下次自动重试。属可重建缓存（走 `CachePaths`，与 boards/media 的 `StatePaths` 相对），删除仅导致下次重新下载。
+重复下载时按中心化边车 `<UserCacheDir>/feishu2md/downloads/<document_id>.yaml`（`download_manifest.go`）记录的「输出目录 → 产物路径 + 远程版本 + 正文引用」跳过未变化文档，仅需一次轻量 `GetDocxDocument`（`--follow` 时回放记录中的引用；旧记录缺引用则重下补录）。版本标记（`DownloadVersion`）：Wiki 用 `obj_edit_time.revision_id`（revision_id 覆盖内容编辑与评论、obj_edit_time 覆盖白板编辑），普通 docx 仅 `revision_id`（纯白板编辑感知不到）。`download --force` 强制重新下载；素材下载不完整时不落记录，下次自动重试。属可重建缓存（走 `CachePaths`，与 boards/media 的 `StatePaths` 相对），删除仅导致下次重新下载。
 
 ### 白板缓存
 
-Wiki 文档中的白板图片支持本地缓存（`~/.cache/feishu2md/whiteboards/`）。
+Wiki 文档中的白板图片支持本地缓存（`<UserCacheDir>/feishu2md/whiteboards/`）。
 
 **重要**：编辑白板不会更新文档的 `revision_id`，但会更新 Wiki 节点的 `obj_edit_time`。因此白板缓存使用 `obj_edit_time` 作为版本标识，而非 `revision_id`。
 
@@ -324,6 +326,6 @@ Wiki 文档中的白板图片支持本地缓存（`~/.cache/feishu2md/whiteboard
 - 批量文件夹下载：无限制并发
 - Wiki 下载：信号量限制最多 10 个并发（`core/client.go` 限流 4 req/s）
 
-### 已弃用
+### 不支持的格式
 
-- 旧版文档 (Docs) 格式不再支持，仅支持新版 DocX 格式
+- 仅支持 DocX；旧版 Docs 链接直接报错拒绝（`cmd/download.go` 的 `case "docs"`）

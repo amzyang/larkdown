@@ -14,16 +14,11 @@ description: |
 
 使用 `larkdown` CLI 实现飞书文档与 Markdown 的双向转换：下载飞书文档为 Markdown，或上传 Markdown 到飞书 Wiki。
 
-## 操作流程
+## 使用要点
 
-当用户提供飞书链接或要求操作飞书文档时：
-
-1. **识别 URL 类型**：根据 URL 路径判断是 docx、wiki 还是 folder
-2. **确定操作**：下载用 `dl`，上传用 `ul`
-3. **执行命令**：URL 始终使用 `""` 包围，建议指定 `-o` 输出目录
-4. **返回结果**：告知用户文件保存位置，按需读取内容
-
-> **重要**：命令行中的 URL 参数始终使用 `""` 包围，避免特殊字符（`&`、`?`、`#` 等）导致 shell 解析错误。
+- URL 参数用 `""` 包围：飞书链接常含 `&`、`?`、`#`，裸传会被 shell 解析。
+- 下载时指定 `-o` 输出目录；完成后告知用户文件位置，按需再读取内容。
+- URL 类型（docx / wiki / folder）由 larkdown 按路径自动识别，无需额外 flag。
 
 ## 快速参考
 
@@ -110,6 +105,7 @@ larkdown 根据 URL 路径自动识别类型，不需要额外 flag：
 | `-c, --comments`  | 包含文档评论                                                | true   |
 | `--no-comments`   | 排除文档评论（优先于 `--comments`）                         | false  |
 | `--no-diff`       | 禁用变更 diff 输出（默认下载时会显示与本地已有文件的 diff） | false  |
+| `-f, --force`     | 强制重新下载；默认按下载记录跳过远端未变化的文档            | false  |
 | `--theirs`        | 本地文件被编辑过时仍以远端为准覆写（放弃本地编辑；与 `--merge` 互斥） | false  |
 | `--merge`         | 本地文件被编辑过时三方合并（diff3）本地与远端改动；冲突写入 `<<<<<<< local` 标记并 exit 1 | false  |
 | `--follow`        | 同时下载正文引用（@提及/链接）的 docx/wiki 文档到 `_refs/`  | false  |
@@ -152,10 +148,11 @@ larkdown 根据 URL 路径自动识别类型，不需要额外 flag：
 | `-p, --parent`          | 父节点 token                       | -          |
 | `--full`                | 全量重建（删除远端所有 block 后重新上传）  | false      |
 | `--dry-run`             | 预览增量 diff，不修改远端（与 `--full` 互斥） | false      |
+| `-v, --verbose`         | 与 `--dry-run` 搭配，连未变化的 block 一并列出 | false      |
 | `--ours`                | 远端自上次同步后已变化时仍以本地为准强制上传（覆盖远端未同步改动） | false      |
 | `--json`                | stdout 输出机读 JSON：单文件为 `{file, is_new, url}`，多文件为汇总 `{documents:[{file,is_new,url}], failed:[{ref,error}]}`；上传进度改道 stderr（与 `--dry-run` 互斥） | false      |
 
-`--source` 与 `--space`/`--parent` 互斥。旧拼写 `--dryrun` 已移除，请使用 `--dry-run`。
+`--source` 与 `--space`/`--parent` 互斥。
 
 **上传行为**：
 
@@ -174,6 +171,7 @@ larkdown 根据 URL 路径自动识别类型，不需要额外 flag：
 ```bash
 larkdown publish ./dist                    # 发布目录（含 index.html 等静态资源）
 larkdown publish ./report.html             # 发布单个 HTML 文件
+larkdown publish ./dist -n "周报看板"        # 指定应用显示名（默认取文件/目录名）
 larkdown publish ./dist --app-id app_xxx   # 显式复用已有应用做更新（接受 app_xxx 或妙搭应用链接）
 larkdown publish ./dist --new              # 强制新建应用（忽略本地发布记录）
 larkdown publish ./dist --json             # agent 机读：{app_id, url, manage_url, name, is_new, scope}
@@ -247,7 +245,7 @@ larkdown auth status --json         # agent 机读：{config_path, app_id, state
 larkdown auth logout                # 撤销并清除本地 user_access_token
 ```
 
-`auth login` 走 OAuth 2.0 设备码流程：打印授权 URL + 验证码（尽力自动打开浏览器），用户在任意设备完成授权后阻塞轮询直到成功并自动保存凭证——无需本地回调 server、无需重定向 URL 配置，适配无头环境。`auth status` 打印配置路径、app_id 与当前认证方式（user token 有效时展示用户身份与刷新令牌有效期）。`auth logout` best-effort 撤销远端 token 并清空本地凭证，之后需重新 login（或用 `--as bot` 显式走应用凭证）。`--port` flag 已废弃为 no-op（仅兼容老脚本）。
+`auth login` 走 OAuth 2.0 设备码流程：打印授权 URL + 验证码（尽力自动打开浏览器），用户在任意设备完成授权后阻塞轮询直到成功并自动保存凭证——无需本地回调 server、无需重定向 URL 配置，适配无头环境。`auth status` 打印配置路径、app_id 与当前认证方式（user token 有效时展示用户身份与刷新令牌有效期）。`auth logout` best-effort 撤销远端 token 并清空本地凭证，之后需重新 login（或用 `--as bot` 显式走应用凭证）。
 
 **两段式登录（agent / CI / 无头环境）**：设备码流程默认阻塞轮询最长约 10 分钟，不适合「只能发一次消息」的 agent。用下面两步拆开——第一步立即返回、把 URL 交给人；人授权后再跑第二步换令牌：
 
@@ -259,8 +257,6 @@ larkdown auth login --device-code <device_code> --json   # 成功输出 {"event"
 ```
 
 `--no-wait` 与 `--device-code` 互斥；`--json` 让每步输出单行 JSON 事件（`device_authorization` / `authorized`）便于程序解析。不带 `--json` 则输出人类可读文本（`--no-wait` 会附上可直接复制的 `larkdown auth login --device-code <code>` 恢复命令）。
-
-> 旧命令 `larkdown login` 仍作为 `larkdown auth login` 的隐藏别名保留。
 
 ### config
 
@@ -285,7 +281,7 @@ larkdown config init --device-code <device_code> --json
 
 - **安装**：详见 [高级用法 - 安装](references/advanced-usage.md#安装)
 - **首次使用**：先 `larkdown config init` 一键创建应用（或 `larkdown config` 手动设置 App ID/Secret），再 `larkdown auth login` 授权
-- **配置文件**：`~/.config/feishu2md/config.json`（路径字面量沿用旧名以兼容老配置）
+- **配置文件**：`<用户配置目录>/feishu2md/config.json`（macOS `~/Library/Application Support/feishu2md/`，Linux `~/.config/feishu2md/`）；实际路径以 `larkdown auth status --json` 的 `config_path` 为准。目录名沿用旧名以兼容老配置
 
 ## 注意事项
 
