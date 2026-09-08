@@ -261,8 +261,7 @@ func repairOneFile(ctx context.Context, client *core.Client, filePath string) (*
 	if uploadOpts.json {
 		uploader.SetOutput(os.Stderr)
 	}
-	// 补链是对刚上传内容的立即重传，漂移检查无增益且 wiki obj_edit_time
-	// 异步滞后可能造成假阳性拒绝，固定 Ours 跳过
+	// 补链是对刚上传内容的立即重传，漂移检查无增益，固定 Ours 跳过
 	return uploader.Upload(ctx, filePath, core.UploadOptions{Incremental: true, Ours: true})
 }
 

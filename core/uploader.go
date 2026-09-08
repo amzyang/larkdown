@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -159,7 +160,6 @@ func asSourceGone(err error, source string) *SourceGoneError {
 type remoteProbe struct {
 	documentID  string
 	wikiToken   string // wiki URL 的 node token；空表示 docx URL
-	objEditTime string // wiki 节点编辑时间（docx 为空，与 DownloadVersion 口径一致）
 	revisionID  int64
 	hasRevision bool
 }
@@ -190,21 +190,20 @@ func (u *Uploader) resolveDocument(ctx context.Context, source string) (remotePr
 		}
 		return remoteProbe{}, fmt.Errorf("获取 Wiki 节点信息失败: %w", err)
 	}
-	return remoteProbe{documentID: node.ObjToken, wikiToken: docToken, objEditTime: node.ObjEditTime}, nil
+	return remoteProbe{documentID: node.ObjToken, wikiToken: docToken}, nil
 }
 
-// remoteVersion 计算探活目标的当前远程版本（与 download 边车的 DownloadVersion 同口径）。
-// wiki 探活只拿到 obj_edit_time，revision 需补一次轻量 GetDocxDocument。
-func (u *Uploader) remoteVersion(ctx context.Context, probe remoteProbe) (string, error) {
-	rev := probe.revisionID
-	if !probe.hasRevision {
-		doc, err := u.client.GetDocxDocument(ctx, probe.documentID)
-		if err != nil {
-			return "", err
-		}
-		rev = doc.RevisionID
+// remoteRevision 取探活目标当前的 revision_id（漂移守卫只比对这一分量，见 VersionRevision）。
+// wiki 探活只拿到节点信息，需补一次轻量 GetDocxDocument。
+func (u *Uploader) remoteRevision(ctx context.Context, probe remoteProbe) (int64, error) {
+	if probe.hasRevision {
+		return probe.revisionID, nil
 	}
-	return DownloadVersion(probe.objEditTime, rev), nil
+	doc, err := u.client.GetDocxDocument(ctx, probe.documentID)
+	if err != nil {
+		return 0, err
+	}
+	return doc.RevisionID, nil
 }
 
 // lookupSyncRecord 查询 filePath 所在目录下 documentID 的同步点记录；
@@ -226,7 +225,8 @@ func (u *Uploader) lookupSyncRecord(documentID, filePath string) *DownloadRecord
 
 // recordUploadSyncPoint 在上传成功后刷新同步点：重新读取远端版本、以盘上最终内容
 // 计算 hash、以正文为 base 快照（上传后远端与本地语义一致）。best-effort，失败仅告警。
-// wiki 的 obj_edit_time 可能异步滞后于本次上传：记录偏旧只导致下次多一次重下载判断，方向安全。
+// wiki 的 obj_edit_time 可能异步滞后于本次上传（画板创建尤甚）：记录偏旧只影响 download 侧的
+// 跳过判断（多重下一次，方向安全），upload 守卫只比对 revision_id 分量不受影响。
 func (u *Uploader) recordUploadSyncPoint(ctx context.Context, probe remoteProbe, filePath string) {
 	if !u.hasCachePaths {
 		return
@@ -373,20 +373,22 @@ func (u *Uploader) updateDocument(ctx context.Context, filePath string, fm *Fron
 		if rec.Conflict && HasUnresolvedConflictMarkers(body) {
 			return nil, &ConflictPendingError{Path: filePath, ManifestFile: u.cachePaths.DownloadManifestFile(documentID)}
 		}
-		// 远端漂移检查：远端自上次同步点后已变化时直接上传会回滚远端改动
+		// 远端漂移检查：远端自上次同步点后已变化时直接上传会回滚远端改动。
+		// 只比对 revision_id 分量（见 VersionRevision），obj_edit_time 对 upload 无意义且会滞后误报
 		if rec.ContentHash != "" {
-			remoteVersion, verr := u.remoteVersion(ctx, probe)
+			rev, verr := u.remoteRevision(ctx, probe)
+			remoteRevision := strconv.FormatInt(rev, 10)
 			switch {
 			case verr != nil:
 				u.logf("警告: 获取远端版本失败，跳过漂移检查: %v\n", verr)
-			case remoteVersion == rec.Version:
+			case remoteRevision == VersionRevision(rec.Version):
 				// 未漂移
 			case opts.Ours:
 				u.logf("--ours: 远端已变化，以本地为准强制上传\n")
 			case opts.DryRun:
 				u.logf("警告: 远端文档自上次同步后已变化，实际上传将被拒绝（先 larkdown download --merge 合并，或加 --ours 强制）\n")
 			default:
-				return nil, &SyncDriftError{Source: fm.Source, RecordedVersion: rec.Version, RemoteVersion: remoteVersion}
+				return nil, &SyncDriftError{Source: fm.Source, RecordedVersion: VersionRevision(rec.Version), RemoteVersion: remoteRevision}
 			}
 		}
 	}

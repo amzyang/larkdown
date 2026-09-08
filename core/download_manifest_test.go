@@ -15,6 +15,19 @@ func TestDownloadVersion(t *testing.T) {
 	}
 }
 
+func TestVersionRevision(t *testing.T) {
+	cases := map[string]string{
+		"1700000000.42": "42",
+		"42":            "42",
+		"":              "",
+	}
+	for version, want := range cases {
+		if got := VersionRevision(version); got != want {
+			t.Errorf("VersionRevision(%q) = %q, want %q", version, got, want)
+		}
+	}
+}
+
 func TestDownloadManifestRoundTrip(t *testing.T) {
 	cp := NewCachePaths(t.TempDir())
 	const docID = "doccnXXX"

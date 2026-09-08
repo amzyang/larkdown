@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -50,6 +51,14 @@ func DownloadVersion(objEditTime string, revisionID int64) string {
 		return rev
 	}
 	return objEditTime + "." + rev
+}
+
+// VersionRevision 取版本标记的 revision_id 分量（无 obj_edit_time 时即原串）。
+// upload 漂移守卫只比对这一分量：upload 只覆盖正文内容，内容编辑必推进 revision_id；
+// obj_edit_time 多覆盖的白板编辑不会被 upload 触碰（画板按 token 复用），且画板创建后
+// wiki obj_edit_time 异步滞后数秒，上传完成瞬间读到的值必偏旧，拿它比对会误报漂移。
+func VersionRevision(version string) string {
+	return version[strings.LastIndexByte(version, '.')+1:]
 }
 
 // ReadDownloadManifest 按 document_id 读取下载版本记录；文件不存在返回 (nil, nil)。
