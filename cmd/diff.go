@@ -145,17 +145,17 @@ func handleDiffCommand(filePath string) error {
 	}
 
 	baseName := filepath.Base(filePath)
-	fromLines, toLines := difflib.SplitLines(normalizedLocal), difflib.SplitLines(remoteMarkdown)
-	fromFile, toFile := "a/"+baseName+" (local)", "b/"+baseName+" (remote)"
+	fromLines, toLines := difflib.SplitLines(remoteMarkdown), difflib.SplitLines(normalizedLocal)
+	fromSide, toSide := "remote", "local"
 	if diffOpts.invert {
 		fromLines, toLines = toLines, fromLines
-		fromFile, toFile = toFile, fromFile
+		fromSide, toSide = toSide, fromSide
 	}
 	diff := difflib.UnifiedDiff{
 		A:        fromLines,
 		B:        toLines,
-		FromFile: fromFile,
-		ToFile:   toFile,
+		FromFile: fmt.Sprintf("a/%s (%s)", baseName, fromSide),
+		ToFile:   fmt.Sprintf("b/%s (%s)", baseName, toSide),
 		Context:  3,
 	}
 	text, err := difflib.GetUnifiedDiffString(diff)

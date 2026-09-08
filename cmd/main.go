@@ -332,7 +332,7 @@ func newDiffCommand() *cobra.Command {
 			return err
 		},
 	}
-	cmd.Flags().BoolVarP(&diffOpts.invert, "invert", "i", false, "Invert diff direction (remote → local)")
+	cmd.Flags().BoolVarP(&diffOpts.invert, "invert", "i", false, "Invert diff direction (local → remote)")
 	return cmd
 }
 

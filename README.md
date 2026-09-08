@@ -282,12 +282,12 @@ larkdown auth login --device-code <device_code> --json   # 用户授权后换取
 
 ```bash
 larkdown diff docs/文档标题.md
-larkdown diff -i docs/文档标题.md  # 反转方向（remote → local）
+larkdown diff -i docs/文档标题.md  # 反转方向（local → remote）
 ```
 
 | 选项       | 简写 | 默认值 | 说明                             |
 | ---------- | ---- | ------ | -------------------------------- |
-| `--invert` | `-i` | false  | 反转 diff 方向（remote → local） |
+| `--invert` | `-i` | false  | 反转 diff 方向（local → remote） |
 
 有差异时以 exit code 1 退出（类似 `git diff --exit-code`），可用于脚本判断；运行出错（网络、认证等）以 exit code 2 退出，与「有差异」区分。
 

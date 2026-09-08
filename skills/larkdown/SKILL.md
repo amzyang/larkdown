@@ -194,7 +194,7 @@ larkdown open a.md b.md c.md
 
 ```bash
 larkdown diff docs/文档标题.md
-larkdown diff -i docs/文档标题.md  # 反转方向（remote → local）
+larkdown diff -i docs/文档标题.md  # 反转方向（local → remote）
 ```
 
 ### search
