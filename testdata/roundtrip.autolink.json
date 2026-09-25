@@ -1,0 +1,41 @@
+{
+  "document": {
+    "document_id": "ROOTDOC",
+    "title": "Title"
+  },
+  "blocks": [
+    {
+      "block_id": "ROOTDOC",
+      "children": ["em", "ww"],
+      "block_type": 1,
+      "page": {
+        "style": {},
+        "elements": [
+          { "text_run": { "content": "Title", "text_element_style": {} } }
+        ]
+      }
+    },
+    {
+      "block_id": "em",
+      "parent_id": "ROOTDOC",
+      "block_type": 2,
+      "text": {
+        "style": {},
+        "elements": [
+          { "text_run": { "content": "联系 foo@bar.com 谢谢", "text_element_style": {} } }
+        ]
+      }
+    },
+    {
+      "block_id": "ww",
+      "parent_id": "ROOTDOC",
+      "block_type": 2,
+      "text": {
+        "style": {},
+        "elements": [
+          { "text_run": { "content": "站点 example.com/a_b 备用", "text_element_style": {} } }
+        ]
+      }
+    }
+  ]
+}

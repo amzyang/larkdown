@@ -6,7 +6,7 @@ import (
 	"strings"
 
 	"github.com/chyroc/lark"
-	"github.com/yuin/goldmark/ast"
+	"github.com/yuin/goldmark/v2/ast"
 	"golang.org/x/net/html"
 	"golang.org/x/net/html/atom"
 )
@@ -818,11 +818,7 @@ func extractInlineText(node ast.Node, source []byte) string {
 
 func extractInlineTextRecursive(node ast.Node, source []byte, buf *strings.Builder) {
 	if t, ok := node.(*ast.Text); ok {
-		buf.Write(t.Segment.Value(source))
-		return
-	}
-	if s, ok := node.(*ast.String); ok {
-		buf.Write(s.Value)
+		buf.WriteString(t.Value.Value(source))
 		return
 	}
 	for child := node.FirstChild(); child != nil; child = child.NextSibling() {

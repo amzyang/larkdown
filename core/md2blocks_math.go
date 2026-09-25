@@ -3,11 +3,10 @@ package core
 import (
 	"bytes"
 
-	"github.com/yuin/goldmark"
-	"github.com/yuin/goldmark/ast"
-	"github.com/yuin/goldmark/parser"
-	"github.com/yuin/goldmark/text"
-	"github.com/yuin/goldmark/util"
+	"github.com/yuin/goldmark/v2/ast"
+	"github.com/yuin/goldmark/v2/parser"
+	"github.com/yuin/goldmark/v2/text"
+	"github.com/yuin/goldmark/v2/util"
 )
 
 // InlineMath 是 inline 公式的 AST 节点
@@ -18,9 +17,15 @@ type InlineMath struct {
 
 var kindInlineMath = ast.NewNodeKind("InlineMath")
 
+func newInlineMath(content string) *InlineMath {
+	n := &InlineMath{Content: content}
+	n.Init(n)
+	return n
+}
+
 func (n *InlineMath) Kind() ast.NodeKind { return kindInlineMath }
-func (n *InlineMath) Dump(source []byte, level int) {
-	ast.DumpHelper(n, source, level, nil, nil)
+func (n *InlineMath) Dump(_ []byte) *ast.NodeDump {
+	return ast.NewNodeDump(n, map[string]any{"Content": n.Content})
 }
 
 // MathBlock 是块级公式的 AST 节点
@@ -32,25 +37,30 @@ type MathBlock struct {
 
 var kindMathBlock = ast.NewNodeKind("MathBlock")
 
-func (n *MathBlock) Kind() ast.NodeKind { return kindMathBlock }
-func (n *MathBlock) Dump(source []byte, level int) {
-	ast.DumpHelper(n, source, level, nil, nil)
+func newMathBlock(content string) *MathBlock {
+	n := &MathBlock{Content: content}
+	n.Init(n)
+	return n
 }
-func (n *MathBlock) IsRaw() bool { return true }
 
-// MathExtension 是 goldmark 扩展
-type MathExtension struct{}
+func (n *MathBlock) Kind() ast.NodeKind { return kindMathBlock }
+func (n *MathBlock) Dump(_ []byte) *ast.NodeDump {
+	return ast.NewNodeDump(n, map[string]any{"Content": n.Content})
+}
 
-func (e *MathExtension) Extend(m goldmark.Markdown) {
-	m.Parser().AddOptions(
+// MathParserExtension 把行内 $…$ 与块级 $$…$$ 公式接入 goldmark parser。
+type MathParserExtension struct{}
+
+func (e *MathParserExtension) ParserOptions(*parser.Config) []parser.Option {
+	return []parser.Option{
 		parser.WithInlineParsers(
-			util.Prioritized(&inlineMathParser{}, 500),
+			util.Prioritized[parser.InlineParser](&inlineMathParser{}, 500),
 		),
 		parser.WithBlockParsers(
 			// 需要比 paragraph parser (优先级 ~200) 更高的优先级
-			util.Prioritized(&blockMathParser{}, 100),
+			util.Prioritized[parser.BlockParser](&blockMathParser{}, 100),
 		),
-	)
+	}
 }
 
 // --- inline math parser: $...$ ---
@@ -104,7 +114,7 @@ func (p *inlineMathParser) Parse(parent ast.Node, block text.Reader, pc parser.C
 				return nil
 			}
 			block.Advance(i + 1)
-			return &InlineMath{Content: content}
+			return newInlineMath(content)
 		}
 	}
 	return nil
@@ -144,7 +154,7 @@ func (p *blockMathParser) Open(parent ast.Node, reader text.Reader, pc parser.Co
 	// 同行关闭: $$content$$
 	if len(rest) >= 2 && rest[len(rest)-2] == '$' && rest[len(rest)-1] == '$' {
 		content := string(rest[:len(rest)-2])
-		return &MathBlock{Content: content}, parser.NoChildren
+		return newMathBlock(content), parser.NoChildren
 	}
 
 	// $$ 后面不应有其他非空内容（除了同行关闭的情况）
@@ -152,7 +162,7 @@ func (p *blockMathParser) Open(parent ast.Node, reader text.Reader, pc parser.Co
 		return nil, parser.NoChildren
 	}
 
-	return &MathBlock{}, parser.NoChildren
+	return newMathBlock(""), parser.NoChildren
 }
 
 func (p *blockMathParser) Continue(node ast.Node, reader text.Reader, pc parser.Context) parser.State {

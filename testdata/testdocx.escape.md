@@ -2,6 +2,8 @@
 
 他说 \_强调\_ 一下，\*星号\* \[标签\] \~波浪\~ \<tag> \$100，而 snake_case_name 不动
 
+实体 \&amp; 与 \&#124; 与 \&sect;，而 ?a=1&b=2 与 &notanentity; 不动
+
 链接 [https://example.com/\_abc](https://example.com/_abc)
 
 [报告 (最终版)](https://example.com/a%20%281%29.pdf)

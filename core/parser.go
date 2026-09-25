@@ -598,7 +598,7 @@ func (p *Parser) ParseDocxTextElementTextRun(tr *lark.DocxTextElementTextRun) st
 		}
 	}
 
-	// markdown 转义（与上传侧 unescapeMarkdownText 成对，签名收敛）。
+	// markdown 转义（与上传侧 goldmark 的 CommonMark 解码成对，签名收敛）。
 	// raw 上下文（code/equation/summary/cell-<pre>）不转义；InlineCode 内容仅在
 	// cell 上下文转义 |（goldmark table 扩展会剥 code span 内的 \|，天然收敛）。
 	if !p.rawInline {
@@ -777,7 +777,7 @@ func (p *Parser) ParseDocxBlockOrdered(b *lark.DocxBlock, indentLevel int) strin
 // & → &amp;、< → &lt;（防 </pre> 字面量提前闭合）、| → &#124;（GFM 按原始文本
 // 的 | 切分 cell）、\n → <br/>（cell 单行约束）；其余为 markdown 行内活性字符
 // （code span/强调/链接/删除线/转义/行内数学式），实体化防止上传侧在 <pre> 标签
-// 之间继续做行内解析时误成结构。上传侧解码：entity 由 goldmark 解析（ast.String），
+// 之间继续做行内解析时误成结构。上传侧解码：entity 由 goldmark 的 text.Decoder 还原，
 // <br/> 还原换行。Replacer 单遍替换，无需关心顺序。
 var cellHTMLTextEscaper = strings.NewReplacer(
 	"&", "&amp;",

@@ -132,6 +132,7 @@ func TestRoundTripSignatures(t *testing.T) {
 		{"roundtrip.table_cell_code", ""},        // 表格单元格内代码块：<pre lang> 表示往返（issue：cell 内 code 换行丢失）
 		{"roundtrip.table_cell_code_merged", ""}, // 合并单元格表格内代码块：HTML <table> 路径往返
 		{"roundtrip.link", ""},
+		{"roundtrip.autolink", ""}, // 裸邮箱 linkify：正文不得混入 goldmark 合成的 mailto: 前缀
 		{"roundtrip.mermaid", ""},
 		{"roundtrip.quote15", ""},
 		{"roundtrip.style_space", ""},
@@ -139,12 +140,13 @@ func TestRoundTripSignatures(t *testing.T) {
 		{"roundtrip.mixed", ""},
 		{"roundtrip.board", ""},       // <whiteboard token> token-aware 签名：round-trip 原地保留
 		{"testdocx.nested_todos", ""}, // 尾随空块删除被跳过（等效 no-op）
-		{"testdocx.escape", ""},       // 特殊字符转义：escapeMarkdownText ↔ unescapeMarkdownText 成对收敛
+		{"testdocx.escape", ""},       // 特殊字符转义：escapeMarkdownText ↔ goldmark decoder 成对收敛
 
 		// 已知不一致（白名单守边界，根因见说明）。
 		{"roundtrip.file", "File 块 [name](token)：token 非本地文件/合法 URL，上传降级纯文本（媒体无源，不可逆）"},
 		{"testdocx.1", "代码块内 mention 的 <cite> 字面量（空块已由跳过删除处理）"},
 		{"testdocx.2", "Typora 边角（inline code 含反引号、$$ 数学块、脚注）"},
+		{"roundtrip.inline_code_newline", "inline code 内换行：CommonMark 规定 code span 的换行折为空格，markdown 无从表达"},
 		{"testdocx.3", ""}, // 续行段落已作为 text child 保留（P1：列表项子块泛化），round-trip 对称
 	}
 

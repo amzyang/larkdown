@@ -49,24 +49,34 @@ just clean          # 删除构建产物
 
 注意：CLI `larkdown upload` 路径不依赖此排版规则（goldmark 把 tight/loose list 等价处理）；此策略仅服务于"网页粘贴"这条 round-trip 通道。
 
-**表格单元格内代码块**：GFM cell 是单行行内上下文，容不下围栏代码块。下载侧渲染为 `<pre lang="x">…</pre>`（换行→`<br/>`，`&`/`<`/`|` 及 markdown 行内活性字符实体化，`parser.go` 的 `escapeCellHTMLText`）；上传侧两条解码路径都还原为 cell 内真 Code 子块（飞书 descendant API 接受 `table_cell→code`，已 E2E 验证）：GFM 表格走 `splitCellSegments`（`md2blocks.go`），goldmark **不在 AST 层解码 entity**（Text 节点保留原文），故用 `cellHTMLTextUnescaper` 手动成对反转义；合并单元格的 HTML `<table>` 走 `extractCellContent`/`extractPreText`（`md2blocks_html.go`，entity 由 x/net/html 自动解码，`<br>` 还原换行）。cell 其他子块换行同样折为 `<br/>`；回归锚：`roundtrip.table_cell_code` fixture（签名收敛）。
+**表格单元格内代码块**：GFM cell 是单行行内上下文，容不下围栏代码块。下载侧渲染为 `<pre lang="x">…</pre>`（换行→`<br/>`，`&`/`<`/`|` 及 markdown 行内活性字符实体化，`parser.go` 的 `escapeCellHTMLText`）；上传侧两条解码路径都还原为 cell 内真 Code 子块（飞书 descendant API 接受 `table_cell→code`，已 E2E 验证）：GFM 表格走 `splitCellSegments`（`md2blocks.go`），entity 由 goldmark 的 `text.Decoder` 在 AST 构造期解码（`&amp;#124;` 这类两级转义单遍还原）；合并单元格的 HTML `<table>` 走 `extractCellContent`/`extractPreText`（`md2blocks_html.go`，entity 由 x/net/html 自动解码，`<br>` 还原换行）。cell 其他子块换行同样折为 `<br/>`；回归锚：`roundtrip.table_cell_code` fixture（签名收敛）。
 
 另：download 覆写本地已有文件时，代码块围栏按**上传等价枚举**保留本地拼写（`core/preserve_fence.go` 的 `PreserveLocalFenceInfo`，issue #7）——本地 ` ```jsonc ` 与远端 JSON 枚举等价则不改写为规范名 `json`，与上传侧块签名按枚举 id 判等的语义对称；`mermaid`/`plantuml` 走特殊通道不参与。
 
-### 下载侧文本转义（escape ↔ unescape 对偶）
+### 下载侧文本转义（escape ↔ decode 对偶）
 
 飞书正文含 markdown 活性字符时下载产物零转义会破损/上传块类型翻转。机制成对（缺一侧签名必不收敛）：
 
-- **下载侧** `escapeMarkdownText`（`core/escape.go`，`ParseDocxTextElementTextRun` 单漏斗接入，覆盖正文/标题/列表/todo/callout/链接文本）：行内集 `\ * `` ` `` [ ] ~ < $` 任意位置 backslash 转义；`_` 仅非 intraword（两侧非字母数字才转，`snake_case`/CJK 词内零噪音）；行首集（含 TextRun 内 `\n` 后的行首，仅无样式标记元素）`# - + > | =`、数字串后 `.`/`)` 防块级翻转（`- ` 变列表、`[!NOTE]` 变 Callout、`[ ] ` 变 Todo、`===` 变 setext）；cell 上下文 `|` 全位置转 `\|`（GFM 标准，goldmark table 扩展原生支持，code span 内的 `\|` 由 goldmark 自己剥）。**不转义**：`& ! ( )`（无行内活性；goldmark 无 inline entity parser，`&` 转义反而不收敛）。
-- **上传侧** `unescapeMarkdownText`（`walkInline` 的 `*ast.Text` 单点 + `extractLinkText` + `ExtractTitle`/`ExtractHeadingsFromMarkdown`）：goldmark **解析期不剥反斜杠**（`\_` 原样留在 Text segment），须手动按 CommonMark 剥 `\`+ASCII 标点；`\`+非标点原样保留。
+- **下载侧** `escapeMarkdownText`（`core/escape.go`，`ParseDocxTextElementTextRun` 单漏斗接入，覆盖正文/标题/列表/todo/callout/链接文本）：行内集 `\ * `` ` `` [ ] ~ < $` 任意位置 backslash 转义；`_` 仅非 intraword（两侧非字母数字才转，`snake_case`/CJK 词内零噪音）；行首集（含 TextRun 内 `\n` 后的行首，仅无样式标记元素）`# - + > | =`、数字串后 `.`/`)` 防块级翻转（`- ` 变列表、`[!NOTE]` 变 Callout、`[ ] ` 变 Todo、`===` 变 setext）；cell 上下文 `|` 全位置转 `\|`（GFM 标准，goldmark table 扩展原生支持，code span 内的 `\|` 由 goldmark 自己剥）。`&` 仅在其起始的字符引用会被 goldmark 解码时转义（`startsCharRef`：实体名命中 HTML5 表且以 `;` 收尾，或数值引用以 `;` 收尾），故 `?a=1&b=2`、`&notanentity;` 零噪音。**不转义**：`! ( )`（无行内活性）。
+- **上传侧**由 goldmark 的 `text.Decoder` 在 AST 构造期完成解码（反斜杠转义 + 字符引用），读值一律用 `Value.Value(source)`。两处刻意读 `Value.Str(source)`（原始源码）：`detectAlertType`/`collectCalloutFirstParagraph` 的 `[!TYPE]` 探测是**块级结构判定**，`\[!NOTE\]` 须仍被视作普通文本；`ast.CodeBlock`/`ast.HTMLBlock` 正文本就是 raw。不走 goldmark 的按行文本提取（`ExtractTitle`/`ExtractHeadingsFromMarkdown`）仍用 `unescapeMarkdownText` 手工剥 `\`+ASCII 标点。
 - **raw 豁免上下文**（`Parser.rawInline`，双向对称不转义）：code 块、equation 块、`<summary>`（上传侧裸串回填）、cell `<pre>`（已有 entity 通道，防双重转义）、mermaid。InlineCode 内容仅 cell 场景转 `|`。
-- **URL destination 位不能用 backslash**（goldmark 会把 `\` 原样带进 Destination 污染上传 URL）：`utils.EscapeMarkdownLinkDest` 对解码后 URL 做最小 percent-encode 防护（空格/`()`/`<>`/`"`/`\`/控制字符），块签名双侧过 `UnescapeURL` 归一不漂移。**本地路径** destination（file/图片素材、索引 RelPath）不能 percent-encode（上传侧按原始路径查文件），含空格/括号用 `<...>` 尖括号 destination 包裹（`utils.QuoteLinkDestIfNeeded`）。
-- **裸 URL span 刻意跳过转义**（`https?://`、`www.` 起始，仅无 Link 样式的纯文本）：linkify 的 URL 正则不含 `\`，转义会把链接截成两半（比现状更糟）；链接 label 内 linkify 短路（goldmark `IsInLinkLabel`），照常全量转义——报告 bug 的 `[https://example.com/_abc](…)` 场景由此修复。
-- **entity 通道**（与 backslash 通道并存，各有解码点勿混用）：cell `<pre>` 用 `escapeCellHTMLText`↔`cellHTMLTextUnescaper`；`<cite>` 内文本用 `xmlEscapeText`（markdown 活性字符实体化）↔ `flushCite` 的 `html.UnescapeString`。
+- **URL destination 位走 percent-encode 而非 backslash**：`utils.EscapeMarkdownLinkDest` 对解码后 URL 做最小 percent-encode 防护（空格/`()`/`<>`/`"`/`\`/控制字符），块签名双侧过 `UnescapeURL` 归一不漂移。**本地路径** destination（file/图片素材、索引 RelPath）不能 percent-encode（上传侧按原始路径查文件），含空格/括号用 `<...>` 尖括号 destination 包裹（`utils.QuoteLinkDestIfNeeded`）。
+- **裸 URL span 刻意跳过转义**（`https?://`、`www.` 起始，仅无 Link 样式的纯文本）：linkify 的 URL 正则不含 `\`，转义会把链接截成两半（比现状更糟）；链接 label 内 linkify 短路（goldmark `IsInLinkLabel`），照常全量转义——报告 bug 的 `[https://example.com/_abc](…)` 场景由此修复。跳过的 span 止于 linkify 自己的尾部裁剪边界（`bareURLEnd` 复刻其回退循环）：被裁掉的尾巴（`?!.,:*_~`、多余 `)`、尾随 `&entity;`）不进链接、按普通文本解析，必须照常转义，否则尾随 `&amp;` 会被 decoder 解码成 `&`。
+- **元素末尾未收尾的字符引用前缀也转义**（`endsWithCharRefPrefix`）：转义按 TextRun 逐个进行，飞书会把同款式正文切成多个相邻 TextRun，拼接后才凑成完整引用的 `&` 在任何单个元素里都看不出来。多转的 `\&` 由上传侧解码回 `&`，签名照样收敛。
+- **entity 通道**（下载侧独立编码，上传侧统一由 `text.Decoder` 解码，勿再手工反转义）：cell `<pre>` 用 `escapeCellHTMLText`；`<cite>` 内文本用 `xmlEscapeText`（markdown 活性字符实体化）。
 - **围栏防提前闭合**：代码块围栏按内容动态加长（`codeFence`，max(3, 最长反引号 run+1)），内容含 ``` 也不会提前闭合围栏。
 - 回归锚：`testdocx.escape` fixture 同时锁 parser golden 与 round-trip 签名全 Equal。
 
-**已知豁免**（修复成本/收益不匹配或需独立设计，改动相关逻辑时注意别顺手"修复"造成签名漂移）：裸 URL 的 linkify 签名漂移（上传后多出 Link 样式，存量行为）；公式内容含 `$`/首尾空格/换行（MathExtension 语法边界）；TextRun 内 `\n` 逃逸 heading/quote/list 结构（需续行前缀机制）；评论附录 marker 与正文碰撞（`docmeta.go` 的 `commentsAppendixMarker` 朴素子串匹配）；`ExtractTitle`/`RemoveFirstHeading` 不跳代码围栏；`<details>` summary 含 `</summary>` 字面量；heading 7-9 级超出 CommonMark 上限；行首 ≥4 空格成 indented code；inline code 含反引号（testdocx.2 白名单）；cell 文本以 `\` 结尾（goldmark table 边界扫描 quirk）。
+**已知豁免**（修复成本/收益不匹配或需独立设计，改动相关逻辑时注意别顺手"修复"造成签名漂移）：裸 URL 的 linkify 签名漂移（上传后多出 Link 样式，存量行为）；公式内容含 `$`/首尾空格/换行（MathParserExtension 语法边界）；TextRun 内 `\n` 逃逸 heading/quote/list 结构（需续行前缀机制）；评论附录 marker 与正文碰撞（`docmeta.go` 的 `commentsAppendixMarker` 朴素子串匹配）；`ExtractTitle`/`RemoveFirstHeading` 不跳代码围栏；`<details>` summary 含 `</summary>` 字面量；heading 7-9 级超出 CommonMark 上限；行首 ≥4 空格成 indented code；inline code 含反引号（testdocx.2 白名单）；inline code 内含换行（CommonMark 规定 code span 的换行折为空格，markdown 无从表达，`roundtrip.inline_code_newline` 白名单）；cell 文本以 `\` 结尾（goldmark table 边界扫描 quirk）；URL destination 内含字符引用形态（如 `?a=1&sect;ion=2`）被 goldmark 按 CommonMark 解码，destination 位无 backslash 可用、percent-encode `&` 又会改变查询串语义，故不防护。
+
+### 上传侧 goldmark 适配（md2blocks）
+
+goldmark 只用 parser + AST，两处与其默认行为不一致，都直接影响写进飞书的正文：
+
+- **表格打断段落**（`md2blocks_table.go` 的 `tableParagraphSplitter`，优先级 199）：goldmark 的表格段落转换器按 `node.Source()` 快照迭代，首个表格已收走其后所有行，循环仍扫描同一份快照，段落里的第二个分隔行会再建一张表、把同一批行第二次写进文档并插到前一张表之前（v2.1.5 仍在）。转换器只有在分隔行落于段落第二行时才会清空段落并 break，故上传前先按首个分隔行把段落切开。分隔行识别与表头列数上限必须与其判定一致，否则切分点错位。
+- **邮箱 autolink**：`AutoLink.Destination` 自带 goldmark 为 href 合成的 `mailto:` 前缀，正文取值须回退 `Label`，否则文本被篡改且与远端签名永不收敛；源码里就写着 `mailto:` 的显式 autolink 不受影响。
+
+同款式的相邻正文 TextRun 由 `appendTextRun` 合并：goldmark 在 linkify 触发点把纯文本切成多个 Text 节点，逐个建元素会让一个段落碎成十几个 TextRun。
 
 ### 增量更新的块更新策略（uploader/diff）
 
@@ -164,7 +174,7 @@ Release 二进制内嵌 DSN（`.goreleaser.yaml` 经 `envOrDefault "SENTRY_DSN" 
   - Fork 源代码本地检出于 `<lark-fork>`（用下方 GitHub 地址 clone 即可），可直接查看实现
   - Fork GitHub: <https://github.com/amzyang/lark.git>
   - 上游 GitHub: <https://github.com/chyroc/lark.git> （复杂问题可参考 issues, discussions, pull requests）
-- `github.com/yuin/goldmark` - Markdown 解析（用于 md2blocks 反向转换）
+- `github.com/yuin/goldmark/v2` - Markdown 解析（用于 md2blocks 反向转换）。只用 parser + AST，不用 renderer；构造见 `newMarkdownParser`（`core/md2blocks.go`），除 `extension.GFMParser` 与 `MathParserExtension` 外还挂了 `tableParagraphSplitter`（见「上传侧 goldmark 适配」）
 - `github.com/spf13/cobra` - CLI 框架（shell 补全为 cobra 动态生成，`pwsh` 保留为 `completion powershell` 的兼容别名）
 
 ### 同步 Fork lark SDK

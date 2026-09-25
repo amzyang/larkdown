@@ -478,6 +478,94 @@ func TestConvertTable(t *testing.T) {
 	assert.Equal(t, int64(2), table.Table.Property.ColumnSize)
 }
 
+func TestConvertTableInterruptingParagraph(t *testing.T) {
+	// 表格紧跟段落行、且段落里还有第二个分隔行：所有行归一张表，分隔行本身是普通行
+	md := "P1\n| a | b |\n| --- | --- |\n| 1 | 2 |\ntx\n| c | d |\n| --- | --- |\n| 3 | 4 |\n"
+	result, err := ConvertMarkdownToDocxBlocks(md, "")
+	require.NoError(t, err)
+
+	require.Len(t, result.TopBlocks, 2)
+	assert.Equal(t, lark.DocxBlockTypeText, result.TopBlocks[0].BlockType)
+	assert.Equal(t, "P1", result.TopBlocks[0].Text.Elements[0].TextRun.Content)
+
+	require.Len(t, result.DescendantGroups, 1)
+	dg := result.DescendantGroups[0]
+	assert.Equal(t, 1, dg.TopBlockIndex)
+	table := dg.Descendants[0]
+	require.NotNil(t, table.Table)
+	assert.Equal(t, int64(6), table.Table.Property.RowSize)
+	assert.Equal(t, int64(2), table.Table.Property.ColumnSize)
+
+	cells := make([]string, 0, len(table.Children))
+	for i := range table.Children {
+		children := tableCellChildren(t, dg, i)
+		require.Len(t, children, 1)
+		var text string
+		for _, el := range children[0].Text.Elements {
+			text += el.TextRun.Content
+		}
+		cells = append(cells, text)
+	}
+	assert.Equal(t, []string{"a", "b", "1", "2", "tx", " ", "c", "d", "---", "---", "3", "4"}, cells)
+}
+
+// TestConvertTableInterruptingParagraphEdges 锁住切分器的行尾算术：段落末行换行的裁剪
+// 在 EOF 无换行、CRLF、以及引用块/列表项前缀下都不能吃掉正文，也不能把表格源码留在段落里。
+func TestConvertTableInterruptingParagraphEdges(t *testing.T) {
+	body := "| a | b |\n| --- | --- |\n| 1 | 2 |\ntx\n| c | d |\n| --- | --- |\n| 3 | 4 |\n"
+	cases := map[string]string{
+		"EOF 无尾换行": strings.TrimSuffix("P1\n"+body, "\n"),
+		"CRLF":     strings.ReplaceAll("P1\n"+body, "\n", "\r\n"),
+		"引用块内":     "> " + strings.ReplaceAll("P1\n"+body, "\n", "\n> "),
+		"列表项内":     "- " + strings.ReplaceAll("P1\n"+body, "\n", "\n  "),
+	}
+	for name, md := range cases {
+		t.Run(name, func(t *testing.T) {
+			result, err := ConvertMarkdownToDocxBlocks(md, "")
+			require.NoError(t, err)
+
+			text := blockTreeText(result)
+			assert.Contains(t, text, "P1", "段落正文不能被行尾裁剪吃掉")
+			assert.NotContains(t, text, "| --- |", "表格源码不能作为正文留在段落里")
+
+			for _, dg := range result.DescendantGroups {
+				for _, d := range dg.Descendants {
+					if d.BlockType == lark.DocxBlockTypeTable {
+						assert.Equal(t, int64(6), d.Table.Property.RowSize, "所有行应归一张表")
+					}
+				}
+			}
+		})
+	}
+}
+
+// blockTreeText 拼接结果中所有块的正文，用于粗粒度断言。
+func blockTreeText(r *ConvertResult) string {
+	var sb strings.Builder
+	collect := func(t *lark.DocxBlockText) {
+		if t == nil {
+			return
+		}
+		for _, e := range t.Elements {
+			if e.TextRun != nil {
+				sb.WriteString(e.TextRun.Content)
+			}
+		}
+	}
+	for _, b := range r.TopBlocks {
+		if b != nil { // descendant group 在 TopBlocks 里占 nil 位
+			collect(b.Text)
+		}
+	}
+	for _, dg := range r.DescendantGroups {
+		for _, d := range dg.Descendants {
+			collect(d.Text)
+			collect(d.Bullet)
+		}
+	}
+	return sb.String()
+}
+
 // tableCellChildren 从 DescendantGroup 中取第 idx 个 cell 的子块序列。
 func tableCellChildren(t *testing.T, dg DescendantGroup, idx int) []*lark.DocxBlock {
 	t.Helper()
@@ -648,6 +736,46 @@ func TestInlineLink(t *testing.T) {
 	assert.Equal(t, "https://google.com", elem.TextRun.TextElementStyle.Link.URL)
 }
 
+func TestInlineTextRunsMerged(t *testing.T) {
+	// goldmark 按 linkify 触发点切出的多个 Text 节点，同款式应合并为单个 TextRun
+	result, err := ConvertMarkdownToDocxBlocks("代码已开源在 Github 中: https://example.com/a 备用", "")
+	require.NoError(t, err)
+	require.Len(t, result.TopBlocks, 1)
+
+	elements := result.TopBlocks[0].Text.Elements
+	require.Len(t, elements, 3)
+	assert.Equal(t, "代码已开源在 Github 中: ", elements[0].TextRun.Content)
+	assert.Equal(t, "https://example.com/a", elements[1].TextRun.Content)
+	require.NotNil(t, elements[1].TextRun.TextElementStyle.Link)
+	assert.Equal(t, " 备用", elements[2].TextRun.Content)
+}
+
+func TestInlineAutoLinkEmail(t *testing.T) {
+	// 裸邮箱 linkify：正文保留原文，不带 mailto: 前缀，也不加 Link 样式
+	result, err := ConvertMarkdownToDocxBlocks("联系 foo@bar.com 谢谢", "")
+	require.NoError(t, err)
+	require.Len(t, result.TopBlocks, 1)
+
+	var text string
+	for _, el := range result.TopBlocks[0].Text.Elements {
+		text += el.TextRun.Content
+		assert.Nil(t, el.TextRun.TextElementStyle.Link)
+	}
+	assert.Equal(t, "联系 foo@bar.com 谢谢", text)
+}
+
+func TestInlineAutoLinkExplicitMailto(t *testing.T) {
+	// 源码里写明的 mailto: autolink 原样保留
+	result, err := ConvertMarkdownToDocxBlocks("<mailto:foo@bar.com>", "")
+	require.NoError(t, err)
+	require.Len(t, result.TopBlocks, 1)
+
+	elem := result.TopBlocks[0].Text.Elements[0]
+	assert.Equal(t, "mailto:foo@bar.com", elem.TextRun.Content)
+	require.NotNil(t, elem.TextRun.TextElementStyle.Link)
+	assert.Equal(t, "mailto:foo@bar.com", elem.TextRun.TextElementStyle.Link.URL)
+}
+
 func TestIsValidLinkURL(t *testing.T) {
 	valid := []string{"https://x.com", "http://x.com/a?b=1", "mailto:a@b.c", "tel:+8610086"}
 	for _, u := range valid {
@@ -689,12 +817,7 @@ func TestBlockquoteRelativeLinkFallback(t *testing.T) {
 
 	text := dg.Descendants[1]
 	require.NotNil(t, text.Text)
-	var linkText *lark.DocxTextElement
-	for _, e := range text.Text.Elements {
-		if e.TextRun != nil && e.TextRun.Content == "TECH.md" {
-			linkText = e
-		}
-	}
+	linkText := findTextRunContaining(text.Text.Elements, "TECH.md")
 	require.NotNil(t, linkText)
 	assert.Nil(t, linkText.TextRun.TextElementStyle.Link)
 }
@@ -2612,6 +2735,16 @@ func findTextRun(elements []*lark.DocxTextElement, content string) *lark.DocxTex
 	return nil
 }
 
+// findTextRunContaining 用于降级为纯文本的场景：文本已并入相邻同款式 TextRun。
+func findTextRunContaining(elements []*lark.DocxTextElement, content string) *lark.DocxTextElement {
+	for _, el := range elements {
+		if el.TextRun != nil && strings.Contains(el.TextRun.Content, content) {
+			return el
+		}
+	}
+	return nil
+}
+
 func TestConvertLocalMdLinkResolvesToWikiURL(t *testing.T) {
 	dir := t.TempDir()
 	writeLocalMd(t, dir, "a.md", "# A\n\n正文\n<!--\nsource: https://feishu.cn/wiki/AAAA\n-->\n")
@@ -2636,7 +2769,7 @@ func TestConvertLocalMdLinkWithoutSourceDegradesToText(t *testing.T) {
 	require.Len(t, result.TopBlocks, 1)
 	assert.Empty(t, result.FileIndices)
 
-	degraded := findTextRun(result.TopBlocks[0].Text.Elements, "B 文档")
+	degraded := findTextRunContaining(result.TopBlocks[0].Text.Elements, "B 文档")
 	require.NotNil(t, degraded)
 	assert.Nil(t, degraded.TextRun.TextElementStyle.Link)
 }

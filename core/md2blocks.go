@@ -11,12 +11,11 @@ import (
 	"strings"
 
 	"github.com/chyroc/lark"
-	"github.com/yuin/goldmark"
-	"github.com/yuin/goldmark/ast"
-	"github.com/yuin/goldmark/extension"
-	east "github.com/yuin/goldmark/extension/ast"
-	"github.com/yuin/goldmark/parser"
-	"github.com/yuin/goldmark/text"
+	"github.com/yuin/goldmark/v2/ast"
+	"github.com/yuin/goldmark/v2/extension"
+	east "github.com/yuin/goldmark/v2/extension/ast"
+	"github.com/yuin/goldmark/v2/parser"
+	"github.com/yuin/goldmark/v2/util"
 )
 
 // ConvertResult 是本地 Markdown → DocxBlock 转换的输出
@@ -106,15 +105,16 @@ func (g *blockIDGenerator) next(prefix string) string {
 	return fmt.Sprintf("%s_%d", prefix, g.counter)
 }
 
-func newMarkdownParser() goldmark.Markdown {
-	return goldmark.New(
-		goldmark.WithExtensions(
-			extension.GFM,
-			&MathExtension{},
+func newMarkdownParser() parser.Parser {
+	return parser.New(
+		parser.WithExtensions(
+			extension.GFMParser,
+			&MathParserExtension{},
 		),
-		goldmark.WithParserOptions(
-			parser.WithAutoHeadingID(),
+		parser.WithParagraphTransformers(
+			util.Prioritized[parser.ParagraphTransformer](tableParagraphSplitter{}, 199),
 		),
+		parser.WithAutoHeadingID(),
 	)
 }
 
@@ -122,9 +122,7 @@ func newMarkdownParser() goldmark.Markdown {
 // mdDir 是 Markdown 文件所在目录，用于解析本地文件链接（如 [report](./report.pdf)）
 func ConvertMarkdownToDocxBlocks(markdown, mdDir string) (*ConvertResult, error) {
 	source := []byte(markdown)
-	md := newMarkdownParser()
-	reader := text.NewReader(source)
-	doc := md.Parser().Parse(reader)
+	doc := newMarkdownParser().Parse(source)
 
 	c := &converter{
 		source: source,
@@ -149,8 +147,6 @@ func (c *converter) convertBlock(node ast.Node) {
 		c.convertHeading(n)
 	case *ast.List:
 		c.convertList(n)
-	case *ast.FencedCodeBlock:
-		c.convertFencedCodeBlock(n)
 	case *ast.CodeBlock:
 		c.convertCodeBlock(n)
 	case *ast.ThematicBreak:
@@ -215,7 +211,7 @@ func (c *converter) convertParagraphContent(parent ast.Node) {
 		}
 		// Markdown link → 本地文件检测（.md 为文档交叉引用，走 walkInline 转 wiki 链接）
 		if link, ok := child.(*ast.Link); ok {
-			dest := string(link.Destination)
+			dest := link.Destination.Value(c.source)
 			if c.isLocalFile(dest) && !isLocalMdLink(dest) {
 				flushText()
 				name := extractLinkText(link, c.source)
@@ -233,7 +229,7 @@ func (c *converter) convertParagraphContent(parent ast.Node) {
 		}
 		// HTML <img> 标签 → 拆分
 		if raw, ok := child.(*ast.RawHTML); ok {
-			tag := string(raw.Segments.Value(c.source))
+			tag := raw.Value.Value(c.source)
 			tagName, _, attrs := parseHTMLTag(tag)
 			if tagName == "img" {
 				if src, ok := attrs["src"]; ok && src != "" {
@@ -356,10 +352,6 @@ func listItemHasDescendantChild(item *ast.ListItem) bool {
 			if paragraphHasImage(ch) || !first {
 				return true
 			}
-		case *ast.TextBlock:
-			if nodeHasImage(ch) || !first {
-				return true
-			}
 		default:
 			return true
 		}
@@ -370,17 +362,13 @@ func listItemHasDescendantChild(item *ast.ListItem) bool {
 
 func (c *converter) convertFlatListItem(list *ast.List, item *ast.ListItem) {
 	// 检查是否为 todo
-	isTodo, done := c.checkTodo(item)
+	isTodo, done := checkTodo(item)
 
 	// 收集 inline 内容（从第一个 paragraph child）
 	var elements []*lark.DocxTextElement
 	for child := item.FirstChild(); child != nil; child = child.NextSibling() {
 		if p, ok := child.(*ast.Paragraph); ok {
 			elements = c.collectInlineElements(p)
-			break
-		}
-		if tp, ok := child.(*ast.TextBlock); ok {
-			elements = c.collectInlineElements(tp)
 			break
 		}
 	}
@@ -440,7 +428,7 @@ func (c *converter) convertNestedList(list *ast.List) {
 }
 
 func (c *converter) buildListItemDescendants(list *ast.List, item *ast.ListItem) ([]string, []*lark.DocxBlock, []DescendantImage) {
-	isTodo, done := c.checkTodo(item)
+	isTodo, done := checkTodo(item)
 	var elements []*lark.DocxTextElement
 	var childIDs []string
 	var descendants []*lark.DocxBlock
@@ -453,11 +441,6 @@ func (c *converter) buildListItemDescendants(list *ast.List, item *ast.ListItem)
 		if !bodySeen {
 			if p, ok := child.(*ast.Paragraph); ok && !paragraphHasImage(p) {
 				elements = c.collectInlineElements(p)
-				bodySeen = true
-				continue
-			}
-			if tp, ok := child.(*ast.TextBlock); ok && !nodeHasImage(tp) {
-				elements = c.collectInlineElements(tp)
 				bodySeen = true
 				continue
 			}
@@ -510,26 +493,9 @@ func (c *converter) buildListItemDescendants(list *ast.List, item *ast.ListItem)
 	return []string{id}, descendants, descImages
 }
 
-func (c *converter) checkTodo(item *ast.ListItem) (isTodo bool, done bool) {
-	for child := item.FirstChild(); child != nil; child = child.NextSibling() {
-		if p, ok := child.(*ast.Paragraph); ok {
-			if fc := p.FirstChild(); fc != nil {
-				if cb, ok := fc.(*east.TaskCheckBox); ok {
-					return true, cb.IsChecked
-				}
-			}
-			break
-		}
-		if tb, ok := child.(*ast.TextBlock); ok {
-			if fc := tb.FirstChild(); fc != nil {
-				if cb, ok := fc.(*east.TaskCheckBox); ok {
-					return true, cb.IsChecked
-				}
-			}
-			break
-		}
-	}
-	return false, false
+func checkTodo(item *ast.ListItem) (isTodo bool, done bool) {
+	status, ok := extension.TaskStatusOf(item)
+	return ok, status == extension.TaskStatusCompleted
 }
 
 // convertContainerChild 将容器（列表项等）内的一个块级子节点转为 descendant 块，
@@ -559,11 +525,6 @@ func (c *converter) convertContainerChild(child ast.Node) ([]*lark.DocxBlock, []
 			return c.convertBlockquoteParagraphWithImages(ch)
 		}
 		addText(c.collectInlineElements(ch))
-	case *ast.TextBlock:
-		if nodeHasImage(ch) {
-			return c.convertBlockquoteParagraphWithImages(ch)
-		}
-		addText(c.collectInlineElements(ch))
 	case *ast.Heading:
 		level := ch.Level
 		if level < 1 {
@@ -577,14 +538,10 @@ func (c *converter) convertContainerChild(child ast.Node) ([]*lark.DocxBlock, []
 		setHeadingField(block, level, &lark.DocxBlockText{Elements: c.collectInlineElements(ch)})
 		childIDs = append(childIDs, id)
 		descendants = append(descendants, block)
-	case *ast.FencedCodeBlock:
-		id := c.idGen.next("code")
-		childIDs = append(childIDs, id)
-		descendants = append(descendants, newCodeBlock(id, fencedCodeLang(ch, c.source), c.extractCodeBlockContent(ch)))
 	case *ast.CodeBlock:
 		id := c.idGen.next("code")
 		childIDs = append(childIDs, id)
-		descendants = append(descendants, newCodeBlock(id, "", c.extractCodeBlockContent(ch)))
+		descendants = append(descendants, newCodeBlock(id, codeBlockLang(ch, c.source), c.extractCodeBlockContent(ch)))
 	case *ast.ThematicBreak:
 		id := c.idGen.next("divider")
 		childIDs = append(childIDs, id)
@@ -644,8 +601,8 @@ func (c *converter) convertContainerChild(child ast.Node) ([]*lark.DocxBlock, []
 
 // --- Code Block ---
 
-func (c *converter) convertFencedCodeBlock(n *ast.FencedCodeBlock) {
-	lang := fencedCodeLang(n, c.source)
+func (c *converter) convertCodeBlock(n *ast.CodeBlock) {
+	lang := codeBlockLang(n, c.source)
 	content := c.extractCodeBlockContent(n)
 
 	// Mermaid → AddOns block
@@ -680,12 +637,9 @@ func (c *converter) convertFencedCodeBlock(n *ast.FencedCodeBlock) {
 	c.addTopBlock(newCodeBlock("", lang, content))
 }
 
-// fencedCodeLang 提取 fenced code block 的语言（去掉 info 中的附加参数）。
-func fencedCodeLang(n *ast.FencedCodeBlock, source []byte) string {
-	if n.Info == nil {
-		return ""
-	}
-	lang := strings.TrimSpace(string(n.Info.Segment.Value(source)))
+// codeBlockLang 提取代码块 info 串中的语言（去掉附加参数）；缩进代码块无 info，返回空。
+func codeBlockLang(n *ast.CodeBlock, source []byte) string {
+	lang := strings.TrimSpace(n.Info.Value(source))
 	if idx := strings.IndexByte(lang, ' '); idx >= 0 {
 		lang = lang[:idx]
 	}
@@ -711,27 +665,8 @@ func newCodeBlock(id, lang, content string) *lark.DocxBlock {
 	}
 }
 
-func (c *converter) convertCodeBlock(n *ast.CodeBlock) {
-	content := c.extractCodeBlockContent(n)
-	c.addTopBlock(&lark.DocxBlock{
-		BlockType: lark.DocxBlockTypeCode,
-		Code: &lark.DocxBlockText{
-			Style: &lark.DocxTextStyle{Language: lark.DocxCodeLanguagePlainText, Wrap: true},
-			Elements: []*lark.DocxTextElement{{
-				TextRun: &lark.DocxTextElementTextRun{Content: content},
-			}},
-		},
-	})
-}
-
-func (c *converter) extractCodeBlockContent(n ast.Node) string {
-	var buf strings.Builder
-	lines := n.Lines()
-	for i := 0; i < lines.Len(); i++ {
-		seg := lines.At(i)
-		buf.Write(seg.Value(c.source))
-	}
-	return strings.TrimSuffix(buf.String(), "\n")
+func (c *converter) extractCodeBlockContent(n *ast.CodeBlock) string {
+	return strings.TrimSuffix(n.Value.Str(c.source), "\n")
 }
 
 // --- Blockquote / Callout ---
@@ -756,14 +691,15 @@ func (c *converter) detectAlertType(n *ast.Blockquote) string {
 			continue
 		}
 		// goldmark 将 [!NOTE] 解析为多个 text 节点: "[", "!NOTE", "]"
-		// 拼接前几个 text 节点，检查是否匹配 [!TYPE]
+		// 拼接前几个 text 节点，检查是否匹配 [!TYPE]。
+		// 取 Str 而非 Value：这是块级结构探测，\[!NOTE\] 须仍被视作普通文本。
 		var buf strings.Builder
 		for fc := p.FirstChild(); fc != nil; fc = fc.NextSibling() {
 			t, ok := fc.(*ast.Text)
 			if !ok {
 				break
 			}
-			buf.Write(t.Segment.Value(c.source))
+			buf.WriteString(t.Value.Str(c.source))
 			text := strings.TrimSpace(buf.String())
 			if strings.HasPrefix(text, "[!") && strings.HasSuffix(text, "]") {
 				alertType := strings.ToUpper(text[2 : len(text)-1])
@@ -851,7 +787,7 @@ func (c *converter) collectCalloutFirstParagraph(p *ast.Paragraph) []*lark.DocxT
 	for child := p.FirstChild(); child != nil; child = child.NextSibling() {
 		if skipMode {
 			if t, ok := child.(*ast.Text); ok {
-				accumulated.Write(t.Segment.Value(c.source))
+				accumulated.WriteString(t.Value.Str(c.source))
 				text := strings.TrimSpace(accumulated.String())
 				if strings.HasPrefix(text, "[!") && strings.HasSuffix(text, "]") {
 					skipMode = false
@@ -959,28 +895,10 @@ func (c *converter) convertBlockquoteChild(child ast.Node) ([]*lark.DocxBlock, [
 				descImages = append(descImages, imgs...)
 			}
 		}
-	case *ast.FencedCodeBlock:
-		lang := ""
-		if ch.Info != nil {
-			lang = strings.TrimSpace(string(ch.Info.Segment.Value(c.source)))
-		}
-		langID, ok := MdStr2DocxCodeLang[strings.ToLower(lang)]
-		if !ok {
-			langID = lark.DocxCodeLanguagePlainText
-		}
-		content := c.extractCodeBlockContent(ch)
+	case *ast.CodeBlock:
 		id := c.idGen.next("bq_code")
 		childIDs = append(childIDs, id)
-		descendants = append(descendants, &lark.DocxBlock{
-			BlockID:   id,
-			BlockType: lark.DocxBlockTypeCode,
-			Code: &lark.DocxBlockText{
-				Style: &lark.DocxTextStyle{Language: langID, Wrap: true},
-				Elements: []*lark.DocxTextElement{{
-					TextRun: &lark.DocxTextElementTextRun{Content: content},
-				}},
-			},
-		})
+		descendants = append(descendants, newCodeBlock(id, codeBlockLang(ch, c.source), c.extractCodeBlockContent(ch)))
 	default:
 		// 其他类型当作文本处理
 		if child.HasChildren() {
@@ -996,19 +914,14 @@ func (c *converter) convertBlockquoteChild(child ast.Node) ([]*lark.DocxBlock, [
 	return descendants, childIDs, descImages
 }
 
-// nodeHasImage 检查节点直接子节点中是否包含 *ast.Image
-func nodeHasImage(n ast.Node) bool {
-	for ch := n.FirstChild(); ch != nil; ch = ch.NextSibling() {
+// paragraphHasImage 检查段落直接子节点中是否包含 *ast.Image
+func paragraphHasImage(p *ast.Paragraph) bool {
+	for ch := p.FirstChild(); ch != nil; ch = ch.NextSibling() {
 		if _, ok := ch.(*ast.Image); ok {
 			return true
 		}
 	}
 	return false
-}
-
-// paragraphHasImage 检查段落直接子节点中是否包含 *ast.Image
-func paragraphHasImage(p *ast.Paragraph) bool {
-	return nodeHasImage(p)
 }
 
 // convertBlockquoteParagraphWithImages 处理 blockquote 内含图片的段落，
@@ -1049,12 +962,12 @@ func (c *converter) convertBlockquoteParagraphWithImages(ch ast.Node) ([]*lark.D
 			})
 			descImages = append(descImages, DescendantImage{
 				TempBlockID: id,
-				ImagePath:   string(img.Destination),
+				ImagePath:   img.Destination.Value(c.source),
 			})
 			continue
 		}
 		if raw, ok := n.(*ast.RawHTML); ok {
-			tag := string(raw.Segments.Value(c.source))
+			tag := raw.Value.Value(c.source)
 			c.handleInlineHTMLTag(tag, &htmlStyleStack, &elements)
 			continue
 		}
@@ -1090,7 +1003,7 @@ func (c *converter) convertImage(n *ast.Image) {
 		Image:     &lark.DocxBlockImage{Token: ""},
 	})
 	c.result.ImageIndices = append(c.result.ImageIndices, idx)
-	c.result.ImagePaths = append(c.result.ImagePaths, string(n.Destination))
+	c.result.ImagePaths = append(c.result.ImagePaths, n.Destination.Value(c.source))
 }
 
 // --- Math Block ---
@@ -1132,7 +1045,7 @@ func (c *converter) buildTableDescendants(n *east.Table) (string, []*lark.DocxBl
 	colMaxWidths := make([]int, cols)
 
 	row := 0
-	for tr := n.FirstChild(); tr != nil; tr = tr.NextSibling() {
+	for _, tr := range tableRows(n) {
 		col := 0
 		for td := tr.FirstChild(); td != nil; td = td.NextSibling() {
 			cellID := fmt.Sprintf("cell_%s_%d_%d", tableID, row, col)
@@ -1207,32 +1120,13 @@ type cellInlineSegment struct {
 	nodes []ast.Node
 }
 
-// cellHTMLTextUnescaper 是下载侧 escapeCellHTMLText（parser.go）的逆变换。
-// goldmark 不在 AST 层解析 entity（Text 节点保留原文），故 <pre> 段内容需手动解码。
-// Replacer 单遍替换：&amp;#124; 在位置 0 先命中 &amp; → 输出 & 后跳过，
-// 剩余 #124; 不再匹配，两级转义天然正确还原。
-var cellHTMLTextUnescaper = strings.NewReplacer(
-	"&amp;", "&",
-	"&lt;", "<",
-	"&gt;", ">",
-	"&#124;", "|",
-	"&#96;", "`",
-	"&#42;", "*",
-	"&#95;", "_",
-	"&#91;", "[",
-	"&#93;", "]",
-	"&#126;", "~",
-	"&#92;", "\\",
-	"&#36;", "$",
-)
-
 // isRawHTMLTag 判断节点是否为指定名称的 RawHTML 标签，返回其属性。
 func (c *converter) isRawHTMLTag(n ast.Node, name string, wantClose bool) (map[string]string, bool) {
 	raw, ok := n.(*ast.RawHTML)
 	if !ok {
 		return nil, false
 	}
-	tagName, isClose, attrs := parseHTMLTag(string(raw.Segments.Value(c.source)))
+	tagName, isClose, attrs := parseHTMLTag(raw.Value.Value(c.source))
 	if tagName != name || isClose != wantClose {
 		return nil, false
 	}
@@ -1294,9 +1188,7 @@ func (c *converter) splitCellSegments(td ast.Node) []cellInlineSegment {
 		}
 		switch n := child.(type) {
 		case *ast.Text:
-			code.WriteString(cellHTMLTextUnescaper.Replace(string(n.Segment.Value(c.source))))
-		case *ast.String:
-			code.Write(n.Value)
+			code.WriteString(n.Value.Value(c.source))
 		default:
 			// 手写 markdown 未转义活性字符时的兜底：取纯文本（标记不可恢复）
 			code.WriteString(extractInlineText(child, c.source))
@@ -1342,8 +1234,23 @@ func (c *converter) cellContentBlocks(td ast.Node, idPrefix string) []*lark.Docx
 	return blocks
 }
 
+// tableRows 按文档顺序返回表头行与表体各行（v2 把表体行包在 TableBody 之下）。
+func tableRows(n *east.Table) []ast.Node {
+	var rows []ast.Node
+	for child := n.FirstChild(); child != nil; child = child.NextSibling() {
+		if body, ok := child.(*east.TableBody); ok {
+			for tr := body.FirstChild(); tr != nil; tr = tr.NextSibling() {
+				rows = append(rows, tr)
+			}
+			continue
+		}
+		rows = append(rows, child)
+	}
+	return rows
+}
+
 func countTableDimensions(n *east.Table) (rows, cols int) {
-	for tr := n.FirstChild(); tr != nil; tr = tr.NextSibling() {
+	for _, tr := range tableRows(n) {
 		rows++
 		colCount := 0
 		for td := tr.FirstChild(); td != nil; td = td.NextSibling() {
@@ -1377,7 +1284,7 @@ func (c *converter) collectInlineElementsFromNodes(nodes []ast.Node) []*lark.Doc
 			continue
 		}
 		if raw, ok := child.(*ast.RawHTML); ok {
-			tag := string(raw.Segments.Value(c.source))
+			tag := raw.Value.Value(c.source)
 			c.handleInlineHTMLTag(tag, &htmlStyleStack, &elements)
 			continue
 		}
@@ -1453,45 +1360,32 @@ func (c *converter) handleInlineHTMLTag(raw string, stack *[]htmlStyleEntry, ele
 func (c *converter) walkInline(node ast.Node, style *lark.DocxTextElementStyle, elements *[]*lark.DocxTextElement) {
 	switch n := node.(type) {
 	case *ast.Text:
-		// goldmark 解析期不剥 backslash 转义（\_ 原样留在 segment），此处按
-		// CommonMark 语义反转义，与下载侧 escapeMarkdownText 成对（签名收敛）。
-		// code span / code block / InlineMath 不走本分支，\ 原样保留。
-		text := unescapeMarkdownText(string(n.Segment.Value(c.source)))
+		// Value 已由 goldmark 按 CommonMark 解码（\ 转义与字符实体），
+		// 与下载侧 escapeMarkdownText 成对（签名收敛）。
+		// code span / code block / InlineMath 绑定 IdentityDecoder，不受此影响。
+		text := n.Value.Value(c.source)
 		if n.SoftLineBreak() {
 			text += "\n"
 		}
 		if text != "" {
-			*elements = append(*elements, &lark.DocxTextElement{
-				TextRun: &lark.DocxTextElementTextRun{
-					Content:          text,
-					TextElementStyle: cloneStyle(style),
-				},
-			})
-		}
-	case *ast.String:
-		text := string(n.Value)
-		if text != "" {
-			*elements = append(*elements, &lark.DocxTextElement{
-				TextRun: &lark.DocxTextElementTextRun{
-					Content:          text,
-					TextElementStyle: cloneStyle(style),
-				},
-			})
+			appendTextRun(elements, text, cloneStyle(style))
 		}
 	case *ast.Emphasis:
 		newStyle := cloneStyle(style)
-		if n.Level == 2 {
-			newStyle.Bold = true
-		} else {
-			newStyle.Italic = true
+		newStyle.Italic = true
+		for child := n.FirstChild(); child != nil; child = child.NextSibling() {
+			c.walkInline(child, newStyle, elements)
 		}
+	case *ast.Strong:
+		newStyle := cloneStyle(style)
+		newStyle.Bold = true
 		for child := n.FirstChild(); child != nil; child = child.NextSibling() {
 			c.walkInline(child, newStyle, elements)
 		}
 	case *ast.CodeSpan:
 		newStyle := cloneStyle(style)
 		newStyle.InlineCode = true
-		text := extractCodeSpanText(n, c.source)
+		text := n.Value.Value(c.source)
 		*elements = append(*elements, &lark.DocxTextElement{
 			TextRun: &lark.DocxTextElementTextRun{
 				Content:          text,
@@ -1500,7 +1394,7 @@ func (c *converter) walkInline(node ast.Node, style *lark.DocxTextElementStyle, 
 		})
 	case *ast.Link:
 		newStyle := cloneStyle(style)
-		dest := string(n.Destination)
+		dest := n.Destination.Value(c.source)
 		if wikiURL := c.resolveLocalMdLink(dest); wikiURL != "" {
 			newStyle.Link = &lark.DocxTextElementStyleLink{URL: wikiURL}
 		} else if isValidLinkURL(dest) {
@@ -1517,12 +1411,12 @@ func (c *converter) walkInline(node ast.Node, style *lark.DocxTextElementStyle, 
 		var altBuf strings.Builder
 		for ch := n.FirstChild(); ch != nil; ch = ch.NextSibling() {
 			if t, ok := ch.(*ast.Text); ok {
-				altBuf.Write(t.Segment.Value(c.source))
+				altBuf.WriteString(t.Value.Value(c.source))
 			}
 		}
 		alt := altBuf.String()
 		if alt == "" {
-			alt = string(n.Destination)
+			alt = n.Destination.Value(c.source)
 		}
 		*elements = append(*elements, &lark.DocxTextElement{
 			TextRun: &lark.DocxTextElementTextRun{
@@ -1531,7 +1425,12 @@ func (c *converter) walkInline(node ast.Node, style *lark.DocxTextElementStyle, 
 			},
 		})
 	case *ast.AutoLink:
-		dest := string(n.URL(c.source))
+		dest := n.Destination.Value(c.source)
+		// 邮箱 autolink 的 mailto: 是 goldmark 为 href 合成的前缀，写进正文会篡改文本、
+		// 且远端无对应 Link 样式，块签名永不收敛；源码里就写着 mailto: 的不在此列
+		if label := n.Label.Value(c.source); dest == "mailto:"+label {
+			dest = label
+		}
 		newStyle := cloneStyle(style)
 		if isValidLinkURL(dest) {
 			newStyle.Link = &lark.DocxTextElementStyleLink{URL: dest}
@@ -1554,14 +1453,45 @@ func (c *converter) walkInline(node ast.Node, style *lark.DocxTextElementStyle, 
 		for child := n.FirstChild(); child != nil; child = child.NextSibling() {
 			c.walkInline(child, newStyle, elements)
 		}
-	case *east.TaskCheckBox:
-		// 由 convertFlatListItem / checkTodo 处理，这里跳过
 	default:
 		// 尝试递归子节点
 		for child := node.FirstChild(); child != nil; child = child.NextSibling() {
 			c.walkInline(child, style, elements)
 		}
 	}
+}
+
+// appendTextRun 追加正文 TextRun，款式相同则并入上一个。
+// goldmark 会在 linkify 的触发点把一段纯文本切成多个 Text 节点，逐个建元素会让
+// 同款式的正文碎成十几个 TextRun 写进飞书。
+func appendTextRun(elements *[]*lark.DocxTextElement, content string, style *lark.DocxTextElementStyle) {
+	if n := len(*elements); n > 0 {
+		if prev := (*elements)[n-1].TextRun; prev != nil && sameTextStyle(prev.TextElementStyle, style) {
+			prev.Content += content
+			return
+		}
+	}
+	*elements = append(*elements, &lark.DocxTextElement{
+		TextRun: &lark.DocxTextElementTextRun{
+			Content:          content,
+			TextElementStyle: style,
+		},
+	})
+}
+
+func sameTextStyle(a, b *lark.DocxTextElementStyle) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	if (a.Link == nil) != (b.Link == nil) {
+		return false
+	}
+	if a.Link != nil && *a.Link != *b.Link {
+		return false
+	}
+	x, y := *a, *b
+	x.Link, y.Link = nil, nil
+	return x == y
 }
 
 func cloneStyle(s *lark.DocxTextElementStyle) *lark.DocxTextElementStyle {
@@ -1576,22 +1506,12 @@ func cloneStyle(s *lark.DocxTextElementStyle) *lark.DocxTextElementStyle {
 	return &clone
 }
 
-func extractCodeSpanText(n *ast.CodeSpan, source []byte) string {
-	var buf strings.Builder
-	for child := n.FirstChild(); child != nil; child = child.NextSibling() {
-		if t, ok := child.(*ast.Text); ok {
-			buf.Write(t.Segment.Value(source))
-		}
-	}
-	return buf.String()
-}
-
 // --- HTMLBlock (<details>/<summary>) ---
 
 var detailsSummaryRe = regexp.MustCompile(`(?is)<details[^>]*>\s*<summary>(.*?)</summary>`)
 
 func (c *converter) convertHTMLBlock(n *ast.HTMLBlock) {
-	raw := c.nodeLines(n)
+	raw := n.Value.Str(c.source)
 
 	if summary, ok := extractDetailsSummary(raw); ok {
 		c.beginDetailsCapture(summary)
@@ -1619,15 +1539,6 @@ func (c *converter) convertGenericHTMLBlock(raw string) {
 		return
 	}
 	c.walkHTMLChildrenGrouped(body)
-}
-
-func (c *converter) nodeLines(n ast.Node) string {
-	var buf strings.Builder
-	for i := 0; i < n.Lines().Len(); i++ {
-		seg := n.Lines().At(i)
-		buf.Write(seg.Value(c.source))
-	}
-	return buf.String()
 }
 
 func extractDetailsSummary(html string) (string, bool) {
@@ -1820,15 +1731,15 @@ func isValidLinkURL(dest string) bool {
 	return err == nil && u.Scheme != ""
 }
 
-// extractLinkText 提取链接的文本内容（纯文本语义，backslash 转义已剥）
+// extractLinkText 提取链接的文本内容（纯文本语义，转义与字符引用已由 decoder 解码）
 func extractLinkText(link *ast.Link, source []byte) string {
 	var buf strings.Builder
 	for ch := link.FirstChild(); ch != nil; ch = ch.NextSibling() {
 		if t, ok := ch.(*ast.Text); ok {
-			buf.Write(t.Segment.Value(source))
+			buf.WriteString(t.Value.Value(source))
 		}
 	}
-	return unescapeMarkdownText(buf.String())
+	return buf.String()
 }
 
 // extractNodeText 递归提取 goldmark AST 节点的纯文本内容
@@ -1839,7 +1750,7 @@ func extractNodeText(n ast.Node, source []byte) string {
 			return ast.WalkContinue, nil
 		}
 		if t, ok := node.(*ast.Text); ok {
-			buf.Write(t.Segment.Value(source))
+			buf.WriteString(t.Value.Value(source))
 		}
 		return ast.WalkContinue, nil
 	})

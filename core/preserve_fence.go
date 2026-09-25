@@ -6,8 +6,8 @@ import (
 	"strings"
 
 	"github.com/chyroc/lark"
-	"github.com/yuin/goldmark/ast"
-	gmtext "github.com/yuin/goldmark/text"
+	"github.com/yuin/goldmark/v2/ast"
+	gmtext "github.com/yuin/goldmark/v2/text"
 )
 
 // localFence 描述 markdown 中一个普通代码块围栏（mermaid/plantuml 走特殊通道，不收集）
@@ -15,46 +15,40 @@ type localFence struct {
 	info      string                // 完整信息串（可含 title=x 等附加属性），无信息串时为空
 	lang      lark.DocxCodeLanguage // 上传等价枚举（未知语言与 newCodeBlock 一致回落 PlainText）
 	content   string
-	infoSeg   *gmtext.Segment // fresh 侧改写用；Info 缺失时为 nil
-	lineStart int             // 首行内容起始偏移（裸围栏插入定位用），空代码块为 -1
+	infoIdx   *gmtext.Index // fresh 侧改写用；无信息串时为 nil
+	lineStart int           // 首行内容起始偏移（裸围栏插入定位用），空代码块为 -1
 	matched   bool
 }
 
 func collectFences(source []byte) []*localFence {
-	doc := newMarkdownParser().Parser().Parse(gmtext.NewReader(source))
+	doc := newMarkdownParser().Parse(source)
 	var fences []*localFence
 	_ = ast.Walk(doc, func(n ast.Node, entering bool) (ast.WalkStatus, error) {
 		if !entering {
 			return ast.WalkContinue, nil
 		}
-		fcb, ok := n.(*ast.FencedCodeBlock)
-		if !ok {
+		fcb, ok := n.(*ast.CodeBlock)
+		if !ok || fcb.CodeBlockKind != ast.CodeBlockKindFenced {
 			return ast.WalkContinue, nil
 		}
-		lang := strings.ToLower(fencedCodeLang(fcb, source))
+		lang := strings.ToLower(codeBlockLang(fcb, source))
 		if lang == "mermaid" || lang == "plantuml" {
 			return ast.WalkContinue, nil
 		}
 		f := &localFence{lineStart: -1}
-		if fcb.Info != nil {
-			seg := fcb.Info.Segment
-			f.info = string(seg.Value(source))
-			f.infoSeg = &seg
+		if !fcb.Info.IsEmpty() {
+			idx := fcb.Info.Index()
+			f.info = fcb.Info.Str(source)
+			f.infoIdx = &idx
 		}
 		langID, known := MdStr2DocxCodeLang[lang]
 		if !known {
 			langID = lark.DocxCodeLanguagePlainText
 		}
 		f.lang = langID
-		lines := fcb.Lines()
-		var sb strings.Builder
-		for i := 0; i < lines.Len(); i++ {
-			seg := lines.At(i)
-			sb.Write(seg.Value(source))
-		}
-		f.content = sb.String()
-		if lines.Len() > 0 {
-			f.lineStart = lines.At(0).Start
+		f.content = fcb.Value.Str(source)
+		if segs := fcb.Value.Segments(); len(segs) > 0 {
+			f.lineStart = segs[0].Start
 		}
 		fences = append(fences, f)
 		return ast.WalkContinue, nil
@@ -121,8 +115,8 @@ func PreserveLocalFenceInfo(local, fresh string) string {
 			continue
 		}
 		switch {
-		case p.f.infoSeg != nil:
-			edits = append(edits, edit{p.f.infoSeg.Start, p.f.infoSeg.Stop, p.l.info})
+		case p.f.infoIdx != nil:
+			edits = append(edits, edit{p.f.infoIdx.Start, p.f.infoIdx.Stop, p.l.info})
 		case p.l.info != "" && p.f.lineStart > 0:
 			// 裸围栏：开围栏行的换行符 = 首行内容前最近的 '\n'（引用/列表前缀下同样成立）
 			if nl := bytes.LastIndexByte(freshSrc[:p.f.lineStart], '\n'); nl >= 0 {

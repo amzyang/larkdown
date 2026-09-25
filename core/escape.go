@@ -5,7 +5,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"github.com/yuin/goldmark/util"
+	"github.com/yuin/goldmark/v2/util"
 )
 
 // escapeContext 描述一段 TextRun 文本所处的 markdown 上下文，决定转义规则。
@@ -17,12 +17,13 @@ type escapeContext struct {
 
 // escapeMarkdownText 对飞书正文文本做 CommonMark backslash 转义，
 // 防止字面字符被上传侧（goldmark）解析成 markdown 结构。
-// 与上传侧 unescapeMarkdownText 成对：块签名经「转义→解析→反转义」后与远端收敛。
+// 与上传侧 goldmark 的 CommonMark 解码成对：块签名经「转义→解析→解码」后与远端收敛。
 //
 // 行内集（任意位置）：\ * ` [ ] ~ < $；_ 仅在非 intraword 位置转义
 // （CommonMark 的 _ 强调不支持 intraword，snake_case 零噪音）。
 // 行首集（含内容中 \n 之后的行首）：见 lineStartTriggerIndex。
-// & ! ( ) 不转义：无行内活性（entity 在本管线不被 goldmark 解码，& 转义反而不收敛）。
+// & 仅在其起始的字符引用会被解码时转义（见 startsCharRef），普通 & 零噪音。
+// ! ( ) 不转义：无行内活性。
 func escapeMarkdownText(s string, ctx escapeContext) string {
 	if s == "" {
 		return s
@@ -59,6 +60,12 @@ func escapeMarkdownLine(out *strings.Builder, line string, atLineStart bool, ctx
 			continue
 		}
 		switch c {
+		case '&':
+			if startsCharRef(line[i:]) || endsWithCharRefPrefix(line[i:]) {
+				out.WriteString(`\&`)
+			} else {
+				out.WriteByte(c)
+			}
 		case '\\', '*', '`', '[', ']', '~', '<', '$':
 			out.WriteByte('\\')
 			out.WriteByte(c)
@@ -156,11 +163,42 @@ func isBareURLStart(line string, i int) bool {
 	return false
 }
 
-// bareURLEnd 返回裸 URL span 的结束下标（GFM autolink 终止于空白与 <）。
+// bareURLEnd 返回裸 URL span 的结束下标：先按 GFM autolink 终止符（空白与 <）扫到边界，
+// 再按 linkify 的尾部裁剪规则回退。被裁掉的尾巴不属于链接，goldmark 会当普通文本解析，
+// 必须照常转义——否则尾随的 `&amp;` 会被 decoder 解码成 `&`，正文丢字符。
+// 裁剪逻辑与 extension/linkify.go 的尾部回退循环一致（括号配对只在 URL span 内计数，
+// 与其 line[:m[1]] 视野相同）。
 func bareURLEnd(line string, i int) int {
 	j := i
 	for j < len(line) && line[j] != ' ' && line[j] != '\t' && line[j] != '<' {
 		j++
+	}
+	opening := strings.Count(line[i:j], "(")
+	closing := strings.Count(line[i:j], ")")
+	for j > i+1 {
+		switch line[j-1] {
+		case '?', '!', '.', ',', ':', '*', '_', '~':
+			j--
+		case ')':
+			if closing <= opening {
+				return j
+			}
+			closing--
+			j--
+		case ';':
+			k := j - 2
+			for ; k > i; k-- {
+				if !util.IsAlphaNumeric(line[k]) {
+					break
+				}
+			}
+			if k == j-2 || line[k] != '&' {
+				return j
+			}
+			j = k
+		default:
+			return j
+		}
 	}
 	return j
 }
@@ -182,8 +220,8 @@ func isWordRune(r rune) bool {
 
 // unescapeMarkdownText 按 CommonMark 规则剥 backslash 转义（\+ASCII 标点 → 标点），
 // 是 escapeMarkdownText 的逆变换；\+非标点按原文保留。
-// goldmark 解析期不剥 \（转义字符原样留在 Text segment），故上传侧必须手动反转义，
-// 否则下载产物/手写 markdown 里的 \_ 会被字面上传、块签名与远端永不收敛。
+// 供 ExtractTitle / ExtractHeadingsFromMarkdown 这类不过 goldmark 的按行文本提取使用
+// （走 AST 的路径由 goldmark 的 text.Decoder 解码，不用本函数）。
 func unescapeMarkdownText(s string) string {
 	if !strings.Contains(s, `\`) {
 		return s
@@ -200,4 +238,56 @@ func unescapeMarkdownText(s string) string {
 		out.WriteByte(s[i])
 	}
 	return out.String()
+}
+
+// endsWithCharRefPrefix 报告 s 是否是一个「还没收尾」的字符引用前缀（& 后全是
+// 合法引用字符，直到本段文本结束）。飞书会把同款式正文切成多个相邻 TextRun，
+// 转义按元素逐个进行，拼接后才凑成完整引用的 & 在任何单个元素里都看不出来；
+// 宁可多转一个 `\&`（上传侧解码回 &，签名照样收敛）也不能让正文丢字符。
+func endsWithCharRefPrefix(s string) bool {
+	if len(s) < 2 || s[0] != '&' {
+		return false
+	}
+	i, digits := 1, util.IsAlphaNumeric
+	if s[1] == '#' {
+		i = 2
+		digits = util.IsNumeric
+		if len(s) > 2 && (s[2] == 'x' || s[2] == 'X') {
+			i, digits = 3, util.IsHexDecimal
+		}
+	}
+	start := i
+	for i < len(s) && digits(s[i]) {
+		i++
+	}
+	return i > start && i == len(s)
+}
+
+// startsCharRef 报告 s 是否以 CommonMark 字符引用（实体引用 / 数值引用）开头。
+// 判定与 goldmark text.DefaultDecoder 同源：实体名必须命中 HTML5 表且以 ; 收尾，
+// 数值引用同样要求 ; 收尾并受位数上限约束，故 `?a=1&b=2`、`&#12345678;` 这类不会被误判。
+func startsCharRef(s string) bool {
+	if len(s) < 3 || s[0] != '&' {
+		return false
+	}
+	if s[1] == '#' {
+		i, digits, maxDigits := 2, util.IsNumeric, 7
+		if s[2] == 'x' || s[2] == 'X' {
+			i, digits, maxDigits = 3, util.IsHexDecimal, 6
+		}
+		start := i
+		for i < len(s) && digits(s[i]) {
+			i++
+		}
+		return i > start && i-start <= maxDigits && i < len(s) && s[i] == ';'
+	}
+	i := 1
+	for i < len(s) && util.IsAlphaNumeric(s[i]) {
+		i++
+	}
+	if i == 1 || i >= len(s) || s[i] != ';' {
+		return false
+	}
+	_, ok := util.LookUpHTML5EntityByName(s[1:i])
+	return ok
 }

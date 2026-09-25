@@ -1,0 +1,32 @@
+{
+  "document": {
+    "document_id": "ROOTDOC",
+    "title": "Title"
+  },
+  "blocks": [
+    {
+      "block_id": "ROOTDOC",
+      "children": ["ic"],
+      "block_type": 1,
+      "page": {
+        "style": {},
+        "elements": [
+          { "text_run": { "content": "Title", "text_element_style": {} } }
+        ]
+      }
+    },
+    {
+      "block_id": "ic",
+      "parent_id": "ROOTDOC",
+      "block_type": 2,
+      "text": {
+        "style": {},
+        "elements": [
+          { "text_run": { "content": "run ", "text_element_style": {} } },
+          { "text_run": { "content": "b\nc", "text_element_style": { "inline_code": true } } },
+          { "text_run": { "content": " now", "text_element_style": {} } }
+        ]
+      }
+    }
+  ]
+}

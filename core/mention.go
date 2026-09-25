@@ -6,8 +6,7 @@ import (
 
 	"github.com/amzyang/larkdown/utils"
 	"github.com/chyroc/lark"
-	"github.com/yuin/goldmark/ast"
-	"golang.org/x/net/html"
+	"github.com/yuin/goldmark/v2/ast"
 )
 
 // 飞书原生「引用」(@文档/@人) 的扩展语法协议（v1）。
@@ -61,8 +60,8 @@ func mentionObjTypeFromString(s string) lark.DocxMentionObjType {
 // xmlTextEscaper 转义 <cite> 标签内文本。除 XML 基本集（& < >）外，markdown
 // 行内活性字符一并实体化：cite 是行内 raw HTML，开闭标签之间的文本仍被 goldmark
 // 按行内规则解析，字面 * _ [ ] 等会被解析成 Emphasis/Link 后标记丢失
-// （extractInlineText 只拍平 Text 字节）。上传侧 html.UnescapeString（flushCite）
-// 一次性还原，与 cellHTMLTextEscaper 同构。
+// （extractInlineText 只拍平 Text 字节）。上传侧由 goldmark 的 text.Decoder 一次性还原，
+// 与 cellHTMLTextEscaper 同构。
 var xmlTextEscaper = strings.NewReplacer(
 	"&", "&amp;",
 	"<", "&lt;",
@@ -141,7 +140,7 @@ type citePending struct {
 // 「裸飞书链接不升级」：仅显式 <cite> 标签才转 mention，普通 [标题](url) 不受影响。
 func (c *converter) handleCiteInline(child ast.Node, elements *[]*lark.DocxTextElement) bool {
 	if raw, ok := child.(*ast.RawHTML); ok {
-		tag := string(raw.Segments.Value(c.source))
+		tag := raw.Value.Value(c.source)
 		name, isClose, attrs := parseHTMLTag(tag)
 		if name == "cite" {
 			if isClose {
@@ -177,15 +176,15 @@ func (c *converter) startCite(attrs map[string]string) {
 	}
 }
 
-// flushCite 在闭标签处产出 mention 元素并清空状态。
-// 标签内文本（显示名/标题）经 HTML 实体解码还原。缺关键 ID 时降级为纯文本。
+// flushCite 在闭标签处产出 mention 元素并清空状态。缺关键 ID 时降级为纯文本。
+// 标签内文本（显示名/标题）的实体已由 goldmark 的 text.Decoder 还原，此处不再解码。
 func (c *converter) flushCite(elements *[]*lark.DocxTextElement) {
 	if c.cite == nil {
 		return
 	}
 	pending := c.cite
 	c.cite = nil
-	text := html.UnescapeString(pending.text.String())
+	text := pending.text.String()
 
 	switch pending.kind {
 	case "user":

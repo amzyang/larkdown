@@ -6,7 +6,7 @@
   "blocks": [
     {
       "block_id": "ROOTDOC",
-      "children": ["t1", "t2", "t3", "t4", "t5", "t6", "t7", "q1", "b1", "td1", "code1", "tbl"],
+      "children": ["t1", "t1e", "t2", "t3", "t4", "t5", "t6", "t7", "q1", "b1", "td1", "code1", "tbl"],
       "block_type": 1,
       "page": {
         "style": {},
@@ -23,6 +23,22 @@
         "style": {},
         "elements": [
           { "text_run": { "content": "他说 _强调_ 一下，*星号* [标签] ~波浪~ <tag> $100，而 snake_case_name 不动", "text_element_style": {} } }
+        ]
+      }
+    },
+    {
+      "block_id": "t1e",
+      "parent_id": "ROOTDOC",
+      "block_type": 2,
+      "text": {
+        "style": {},
+        "elements": [
+          {
+            "text_run": {
+              "content": "实体 &amp; 与 &#124; 与 &sect;，而 ?a=1&b=2 与 &notanentity; 不动",
+              "text_element_style": {}
+            }
+          }
         ]
       }
     },
