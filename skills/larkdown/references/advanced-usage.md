@@ -49,7 +49,7 @@ brew install amzyang/tap/larkdown
 
 登录走 **OAuth 2.0 设备码流程（device flow）**：`larkdown auth login` 申请设备码、展示授权 URL + 验证码（尽力打开浏览器），用户在任意设备完成授权后轮询换取 `user_access_token` + `refresh_token`，并记录各自过期时刻（`token_expire_time` / `refresh_token_expire_time`）。无需本地回调 server、无需重定向 URL 配置。
 
-**身份策略**：所有命令默认以用户身份（`user_access_token`）调用，应用身份（`tenant_access_token`）仅在显式加全局 flag `--as bot` 时使用，不再静默降级。默认（`--as user`）下每次命令的 token 处理：
+**身份策略**：所有命令默认以用户身份（`user_access_token`）调用，应用身份（`tenant_access_token`）仅在显式加全局 flag `--as bot` 时使用，不静默降级。默认（`--as user`）下每次命令的 token 处理：
 
 1. `user_access_token` 有效（未过期，含 5 分钟缓冲）→ 直接使用
 2. access 过期但 `refresh_token` 未过期 → 自动刷新（跨进程加锁防轮换式 refresh_token 被并发打翻，走 v2 `oauth/token` 端点），保存新 token
@@ -110,7 +110,8 @@ larkdown auth login --device-code <device_code> --json   # 用户授权后换取
 
 ## 内容限制
 
-- 下载支持 Docx、Wiki、电子表格（Sheet）、多维表格（Bitable）
+- 下载支持 Docx、Wiki、电子表格（Sheet）与云盘文件
+- 独立的多维表格（Bitable）/ 思维导图链接会被跳过；嵌在 docx 正文中的多维表格块转为 Markdown 表格
 - 不支持 Slides（幻灯片）
 - 单次请求最大文档大小：10MB
 - 图片下载到本地 `static/` 目录，Markdown 中路径自动替换

@@ -47,5 +47,4 @@ larkdown 通过 **push 一个 `v*` tag** 触发 `.github/workflows/release.yml` 
 ## 注意事项
 - **发布是对外操作**：tag 推送即触发公开 Release + Homebrew 更新；务必先确认 `just test` 绿、版本号无误再推 tag。
 - 配置位置：GoReleaser 在仓库根 `.goreleaser.*`，CI 在 `.github/workflows/release.yml`（`on: push tags 'v*'`）。
-- CI 里 Node.js 弃用等 annotation 属基础设施提示，非发布失败，可忽略。
 - tag 用 annotated（`-a`）而非 lightweight，便于 changelog 与 `git describe`。

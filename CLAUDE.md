@@ -126,8 +126,9 @@ cmd/           # CLI 入口 (spf13/cobra)
   sentry.go    # Sentry 遥测：DSN 解析纯函数、BeforeSend 隐私清洗、panic 上报 helper、隐藏诊断命令 larkdown sentry
 
 core/          # 核心业务逻辑
-  client.go    # 飞书 API 客户端封装（lark SDK + 限流 4 req/s + 60s 超时）
-  parser.go    # DocxBlock → Markdown 转换器（支持 80+ 语言代码块）
+  client.go    # 飞书 API 客户端封装（lark SDK + 60s 超时；限流见 rate_limiter.go）
+  parser.go    # DocxBlock → Markdown 转换器（代码块语言映射表 DocxCodeLang2MdStr）
+  rate_limiter.go # per-API（Scope#API）限流：GET 5 req/s、写 3 req/s + 99991400 响应式重试
   md2blocks.go # Markdown → DocxBlock 反向转换（goldmark 解析 AST）
   diff.go      # 块级 diff 算法（LCS + SHA-256 签名），用于增量更新
   uploader.go  # Wiki 上传器：新建文档或增量更新（基于 frontmatter 判断）
@@ -142,7 +143,7 @@ core/          # 核心业务逻辑
 
 utils/         # URL 校验与 token 提取、文件名清理
 
-skills/        # Agent Skill 定义（larkdown skill：SKILL.md + references/）
+skills/        # Agent Skill 定义：larkdown（SKILL.md + references/）与 release（发版流程）；安装说明见 cmd/skills.go
 
 testdata/      # 测试数据：JSON (DocxBlock) + MD (期望输出) golden file 对比
 ```
@@ -300,15 +301,15 @@ just build                                                   # 产出仓库根�
 ```
 
 - 测试资源放在 `testdata/`：可复用已有 fixture（`roundtrip.*.json`、`upload.*.md` 等），也可按需在 `testdata/` 下新建临时文档/资源做 round-trip 验证。
-- E2E 打的是真实 API，受 `core/client.go` 限流（4 req/s）约束；`--dry-run` 可在不修改远端文档的前提下预览增量行为（更新已有文档默认即增量，`--full` 切换为全量重建）。
+- E2E 打的是真实 API，受 `core/rate_limiter.go` 的 per-API 限流（GET 5 req/s、写 3 req/s）约束；`--dry-run` 可在不修改远端文档的前提下预览增量行为（更新已有文档默认即增量，`--full` 切换为全量重建）。
 - 验证「上传/编辑后页面的实际渲染效果」可用 `/chrome-devtools-mcp:chrome-devtools` skill（或 chrome devtools mcp）打开飞书文档 URL，直接检查真实页面（排版、块结构、图片/白板等），而非仅看本地 Markdown 或 API 返回。
 - 需要脚本化或复杂浏览器操作（多步交互、批量校验、自动化 round-trip）时，用 `agent-browser` CLI（`agent-browser skills get core --full` 查用法）写脚本驱动飞书页面。
 
 ### CI 检查
 
-- gofmt 格式检查
-- 全量测试
-- CLI 构建
+`.github/workflows/ci.yml`（PR 与 push main）依次跑 `go vet ./...` → `go build ./...` → `go test ./...`。
+**没有 gofmt 检查**——格式只能靠本地 `just format`，CI 不兜底；反过来 `go vet` 会挡下测试挡不住的问题，提交前一并跑。
+Dependabot 的 minor/patch PR 测试通过后由 automerge job 直接合并（仓库无分支保护，原生 auto-merge 不生效），major 留人工 review。
 
 ### 同步守卫与三方合并（download --merge / --theirs, upload --ours）
 
@@ -316,7 +317,7 @@ just build                                                   # 产出仓库根�
 
 - **download 侧守卫**（`cmd/download.go`）：`ClassifySync`（`core/sync.go`）按「本地 hash × 远端版本」四象限判定；本地被编辑且将覆写不同内容 → 默认拒绝（`DivergedError`，exit 1），`--theirs` 放弃本地编辑、`--merge` 三方合并。回收站移动（标题变更旧文件）在守卫放行后才执行。mirror 与 `_refs/` 是单向镜像语义，固定 `theirs`，不进守卫。
 - **三方合并**（`core/merge3.go`，`github.com/epiclabs-io/diff3` 行级 LCS）：base/local/remote 三份**都过 `NormalizeMarkdown`** 再 merge——未编辑区域字节相同、归一后仍相同（不引入假冲突）；手写拼写 vs 渲染产物的噪音（upload 建立的 base 是手写形态）靠归一化对消，这一步是 load-bearing。输出为归一化形态，围栏拼写经 `PreserveLocalFenceInfo` 回填。冲突写 git 风格标记（整行 `<<<<<<< local` / `>>>>>>> remote`，检测按自产标签精确匹配、代码块中 `<<<<<<< HEAD` 不误伤），边车记 `conflict: true`，命令 exit 1（`MergeConflictError`）。干净合并后 version/base 推进到远端新版本，本地相对 base 的差异恰为「待 upload 的本地改动」，直接 `upload` 即收敛。
-- **upload 侧守卫**（`uploader.go` 的 `updateDocument`）：有同步点记录（`lookupSyncRecord` 要求记录路径与文件一致）时，`conflict` 标志 + 标记仍在 → `ConflictPendingError` 拒绝；远端 `revision_id` ≠ 记录的 `revision_id` 分量 → `SyncDriftError` 拒绝（`--ours` 强制、dry-run 降级警告；`remoteProbe` 复用探活结果省 API 调用）。**刻意忽略 `obj_edit_time`**（`VersionRevision`）：upload 只覆盖正文，内容编辑必推进 revision；白板编辑不被 upload 触碰，且画板创建后 wiki `obj_edit_time` 异步滞后数秒（已 E2E 实测），上传完成瞬间记录的值必偏旧，比全串会让含 PlantUML 的文档下次 upload 必被误拒。补链二次上传（`repairOneFile`）固定 `Ours`（对刚上传内容的立即重传，漂移检查无增益）。无记录 → 维持「本地赢」旧行为。
+- **upload 侧守卫**（`uploader.go` 的 `updateDocument`）：有同步点记录（`lookupSyncRecord` 要求记录路径与文件一致）时，`conflict` 标志 + 标记仍在 → `ConflictPendingError` 拒绝；远端 `revision_id` ≠ 记录的 `revision_id` 分量 → `SyncDriftError` 拒绝（`--ours` 强制、dry-run 降级警告；`remoteProbe` 复用探活结果省 API 调用）。**刻意忽略 `obj_edit_time`**（`VersionRevision`）：upload 只覆盖正文，内容编辑必推进 revision；白板编辑不被 upload 触碰，且画板创建后 wiki `obj_edit_time` 异步滞后数秒（已 E2E 实测），上传完成瞬间记录的值必偏旧，比全串会让含 PlantUML 的文档下次 upload 必被误拒。补链二次上传（`repairOneFile`）固定 `Ours`（对刚上传内容的立即重传，漂移检查无增益）。无记录 → 本地赢。
 - 版本比较含评论引起的 revision 变化，**评论也会触发漂移拒绝**（已知松弛，`--ours` 或 `--merge` 均可解）；`DivergedError`/`MergeConflictError`/`SyncDriftError`/`ConflictPendingError` 均属用户可自助错误，cmd 层转 `exitWithMessage` 不上报 Sentry。素材下载失败时若本次做过合并，保留记录优先于清记录重试（合并结果承载本地编辑，不能当无基线覆写）。
 
 ### 下载跳过（未变化文档）
@@ -334,8 +335,10 @@ Wiki 文档中的白板图片支持本地缓存（`<UserCacheDir>/feishu2md/whit
 ### 并发处理
 
 - 批量文件夹下载：无限制并发
-- Wiki 下载：信号量限制最多 10 个并发（`core/client.go` 限流 4 req/s）
+- Wiki 下载：信号量限制最多 10 个并发（叠加 `core/rate_limiter.go` 的 per-API 限流：GET 5 req/s、写 3 req/s）
 
-### 不支持的格式
+### 下载的类型分流
 
-- 仅支持 DocX；旧版 Docs 链接直接报错拒绝（`cmd/download.go` 的 `case "docs"`）
+`cmd/download.go` 按 obj_type 分流：`docx` 转 Markdown；`sheet` 导出 xlsx（owner 禁用导出时降级 Markdown）；
+`file` 原样下载；`mindnote` / `bitable` 打印提示后跳过；旧版 `docs` 直接报错拒绝；其余类型报「不支持的文档类型」。
+嵌在 docx 正文里的多维表格块另走 parser 渲染成表格（`core/parser.go` 的 `GetBitableContent`），与独立 bitable 链接的分流无关。

@@ -285,7 +285,7 @@ larkdown config init --device-code <device_code> --json
 
 ## 注意事项
 
-- 下载支持 Docx、Wiki、电子表格（Sheet）、多维表格（Bitable）；不支持 Slides（幻灯片）
+- 下载支持 Docx、Wiki、电子表格（Sheet）与云盘文件；独立的多维表格（Bitable）/ 思维导图链接会被跳过，多维表格只有嵌在 docx 正文中时才转为表格；不支持 Slides（幻灯片）
 - `search` 仅支持用户身份；scope `search:docs:read` 为后加入，老 token 需重新 `larkdown auth login` 才能使用
 - 所有命令默认以**用户身份**（user_access_token）调用；未登录/登录失效直接报错提示 `larkdown auth login`，**不静默降级**——应用身份（tenant_access_token）仅在显式加全局 flag `--as bot` 时使用
 - 登录走 OAuth 2.0 设备码流程；access_token 过期自动刷新（v2 端点 + 跨进程锁），refresh_token 默认约 7 天，过期后需重新 `larkdown auth login`
