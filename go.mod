@@ -3,20 +3,20 @@ module github.com/amzyang/larkdown
 go 1.27.0
 
 require (
-	charm.land/lipgloss/v2 v2.0.6
+	charm.land/lipgloss/v2 v2.1.0
 	github.com/alecthomas/chroma/v2 v2.27.0
 	github.com/browserutils/kooky v0.2.10
 	github.com/charmbracelet/colorprofile v0.4.3
 	github.com/chyroc/lark v0.0.114-0.20260226061401-82ff1e3935ce
 	github.com/epiclabs-io/diff3 v0.0.0-20260520111523-3b1669897fb1
 	github.com/getsentry/sentry-go v0.50.0
-	github.com/gofrs/flock v0.13.1
+	github.com/gofrs/flock v0.13.2
 	github.com/pkg/errors v0.9.1
 	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/pflag v1.1.0
 	github.com/stretchr/testify v1.12.1
-	github.com/yuin/goldmark/v2 v2.1.15
+	github.com/yuin/goldmark/v2 v2.1.16
 	golang.org/x/net v0.62.0
 	golang.org/x/time v0.16.0
 	gopkg.in/yaml.v3 v3.0.1
