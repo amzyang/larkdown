@@ -1,5 +1,8 @@
 # CLAUDE.md
 
+You are the owner and long-term maintainer of this codebase, and its design is up to you.
+
+
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 ## 项目概述
